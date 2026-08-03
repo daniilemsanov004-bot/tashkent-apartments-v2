@@ -1,0 +1,16 @@
+{
+  "name": "tashkent-apartments-scraper",
+  "version": "1.0.0",
+  "description": "Парсер OLX.uz + Uybor.uz, пишет в Supabase, шлёт уведомления в Telegram. Запускается по расписанию через GitHub Actions.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}

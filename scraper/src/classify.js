@@ -3,12 +3,17 @@ import axios from 'axios';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 const SYSTEM_PROMPT = `Ты помогаешь анализировать объявления о квартирах в Ташкенте.
-По тексту объявления определи:
+Тебе дают текст объявления и, отдельной строкой, имя продавца (может
+отсутствовать). По этим данным определи:
 1) seller_type: "owner" (похоже на собственника), "agent" (похоже на риелтора/агентство) или "unknown" (непонятно).
-   Признаки агента: упоминания "агентство", "комиссия", "риелтор", "показы по записи",
-   слишком гладкий рекламный текст, несколько похожих объявлений в одном стиле.
+   Признаки агента в тексте: упоминания "агентство", "комиссия", "риелтор", "показы по записи",
+   слишком гладкий рекламный текст, канцелярские формулировки ("кадастр есть", "ор.р.").
+   Признаки агента в ИМЕНИ продавца: название компании вместо имени человека —
+   например содержит "Group", "Estate", "Real Estate", "Tower", "Avenue", "Company",
+   "Agency", "Недвижимость", "риелт", или просто звучит как бренд/ЖК, а не как имя
+   человека (например "Tashkent Avenue", "City Real Estate").
    Признаки собственника: разговорный тон, конкретные бытовые детали, "мой", "моя квартира",
-   личный номер телефона без указания компании.
+   личный номер телефона без указания компании, обычное человеческое имя продавца.
    Если сомневаешься — ставь "unknown", а не угадывай.
 2) confidence: "high" | "medium" | "low" — насколько ты уверен в seller_type.
 3) district: район города, если упомянут
@@ -21,10 +26,14 @@ const SYSTEM_PROMPT = `Ты помогаешь анализировать объ
 Отвечай СТРОГО в формате JSON, без пояснений и без markdown-разметки:
 {"seller_type": "...", "confidence": "...", "district": "...", "rooms": ..., "area": ..., "phone": ...}`;
 
-export async function classifyListing(rawText) {
+export async function classifyListing(rawText, sellerName) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY не задан в .env');
   }
+
+  const content = sellerName
+    ? `Имя продавца: ${sellerName}\n\nТекст объявления:\n${rawText.slice(0, 3000)}`
+    : rawText.slice(0, 3000);
 
   const response = await axios.post(
     'https://api.anthropic.com/v1/messages',
@@ -32,7 +41,7 @@ export async function classifyListing(rawText) {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: rawText.slice(0, 3000) }],
+      messages: [{ role: 'user', content }],
     },
     {
       headers: {
@@ -89,3 +98,11 @@ export function labelFor(classification) {
   }
   return { text: 'Сомнительно — проверьте сами', kind: 'uncertain' };
 }
+
+/**
+ * Жёсткое правило, отдельное от ИИ: если у продавца много других
+ * объявлений о недвижимости — это почти наверняка агентство, даже
+ * если сам текст звучит по-человечески. Работает независимо от того,
+ * включена ли ИИ-классификация — не требует API-ключа и денег.
+ */
+export const SELLER_LISTINGS_AGENT_THRESHOLD = 2; // больше 2 объявлений у продавца = агент

@@ -95,5 +95,5 @@ export async function fetchUyborListings(dealType = 'rent') {
  * хватает ли данных из поиска.
  */
 export async function fetchUyborDetails() {
-  return '';
+  return { description: '', sellerName: null, sellerListingsUrl: null };
 }

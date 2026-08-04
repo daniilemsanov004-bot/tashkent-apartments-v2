@@ -16,6 +16,7 @@ function timeAgo(iso) {
 function badgeFor(listing) {
   if (listing.label_kind === 'owner') return { cls: 'badge-owner', text: '✓ Собственник' };
   if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: 'Без проверки ИИ' };
+  if (listing.label_kind === 'agent') return { cls: 'badge-agent', text: `🏢 ${listing.label_text || 'Агентство'}` };
   return { cls: 'badge-unsure', text: '? Сомнительно' };
 }
 

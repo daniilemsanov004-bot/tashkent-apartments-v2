@@ -102,6 +102,7 @@ select{
 .badge-owner{ background:rgba(79,176,165,0.14); color:var(--accent); border-color:rgba(79,176,165,0.3); }
 .badge-unsure{ background:rgba(215,169,74,0.12); color:var(--gold); border-color:rgba(215,169,74,0.28); }
 .badge-unchecked{ background:var(--surface-2); color:var(--text-faint); }
+.badge-agent{ background:rgba(224,104,79,0.12); color:var(--danger); border-color:rgba(224,104,79,0.28); }
 .card-bottom{
   display:flex; justify-content:space-between; align-items:center;
   margin-top:0.85rem; padding-top:0.85rem; border-top:1px solid var(--border);

@@ -1,8 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 
+// Supabase-клиент по умолчанию создаёт Realtime-подключение (даже если
+// оно нам не нужно — мы им не пользуемся), а для этого ему нужен
+// глобальный WebSocket. В Node.js < 22 его нет, поэтому передаём
+// реализацию из пакета ws явно — так не зависим от того, какую версию
+// Node.js фактически использует раннер GitHub Actions.
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // service_role ключ — обходит RLS, только для бэкенда, никогда не светить на фронтенде
+  process.env.SUPABASE_SERVICE_KEY, // service_role ключ — обходит RLS, только для бэкенда, никогда не светить на фронтенде
+  {
+    realtime: { transport: WebSocket },
+  }
 );
 
 export async function isKnown(id) {

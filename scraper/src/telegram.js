@@ -69,13 +69,17 @@ export async function notifyNewListing(listing) {
     phoneLine +
     `\n${listing.url}`;
 
-  // Если номер удалось получить — добавляем кнопки для быстрой связи
+  // Если номер удалось получить — добавляем кнопки для быстрой связи.
+  // tel:-ссылка не терпит пробелов/дефисов — Telegram отклоняет всю
+  // кнопку с ошибкой "Wrong port number specified in the URL".
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
+    const national = digits.startsWith('998') ? digits.slice(3) : digits;
+    const cleanPhone = `+998${national}`;
     buttons.push([
       { text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` },
-      { text: '📞 Позвонить', url: `tel:${listing.phone}` },
+      { text: '📞 Позвонить', url: `tel:${cleanPhone}` },
     ]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);

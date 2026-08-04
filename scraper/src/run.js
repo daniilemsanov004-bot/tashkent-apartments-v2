@@ -1,14 +1,14 @@
 import 'dotenv/config';
-import { fetchOlxListings, fetchOlxDetails } from './scrapers/olx.js';
+import { fetchOlxListings, fetchOlxDetails, fetchOlxSellerListingsCount } from './scrapers/olx.js';
 import { fetchUyborListings, fetchUyborDetails } from './scrapers/uybor.js';
-import { classifyListing, shouldNotify, labelFor } from './classify.js';
+import { classifyListing, shouldNotify, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
 import { notifyNewListing, notifyAlert } from './telegram.js';
 import { isKnown, saveListing, markNotified } from './db.js';
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 const USE_AI_CLASSIFICATION = process.env.USE_AI_CLASSIFICATION === 'true';
 
-async function processSource(fetchList, fetchDetails, sourceName, dealType) {
+async function processSource(fetchList, fetchDetails, sourceName, dealType, fetchSellerCount = null) {
   const sourceLabel = `${sourceName}-${dealType}`;
   console.log(`[${sourceLabel}] проверяю новые объявления...`);
 
@@ -30,9 +30,13 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
     if (await isKnown(item.id)) continue;
 
     let rawText = item.title;
+    let sellerName = null;
+    let sellerListingsUrl = null;
     try {
       const details = await fetchDetails(item.url);
-      if (details) rawText = `${item.title}\n${details}`;
+      if (details?.description) rawText = `${item.title}\n${details.description}`;
+      sellerName = details?.sellerName || null;
+      sellerListingsUrl = details?.sellerListingsUrl || null;
     } catch (err) {
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
     }
@@ -41,8 +45,35 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
     const phoneFromText = phoneMatch ? phoneMatch[1] : null;
     const phoneFromApi = item.phone_from_api || null;
 
+    // Жёсткое правило (без ИИ, бесплатно): если у продавца много других
+    // объявлений о недвижимости — это агентство, точка. Работает
+    // независимо от USE_AI_CLASSIFICATION.
+    let sellerListingsCount = null;
+    let isConfirmedAgentByProfile = false;
+    if (fetchSellerCount && sellerListingsUrl) {
+      sellerListingsCount = await fetchSellerCount(sellerListingsUrl);
+      if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
+        isConfirmedAgentByProfile = true;
+        console.log(
+          `[${sourceLabel}] продавец "${sellerName || '?'}" имеет ${sellerListingsCount} объявлений → агентство, в мусорку: ${item.title}`
+        );
+      }
+    }
+
     let classification;
-    if (!USE_AI_CLASSIFICATION) {
+    let label;
+
+    if (isConfirmedAgentByProfile) {
+      classification = {
+        seller_type: 'agent',
+        confidence: 'high',
+        district: null,
+        rooms: null,
+        area: null,
+        phone: null,
+      };
+      label = { text: `Агентство (${sellerListingsCount} объявлений)`, kind: 'agent' };
+    } else if (!USE_AI_CLASSIFICATION) {
       classification = {
         seller_type: 'unknown',
         confidence: 'n/a',
@@ -51,9 +82,10 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
         area: null,
         phone: null,
       };
+      label = { text: 'Без проверки ИИ', kind: 'unchecked' };
     } else {
       try {
-        classification = await classifyListing(rawText);
+        classification = await classifyListing(rawText, sellerName);
       } catch (err) {
         console.error('Ошибка классификации:', err.message);
         classification = {
@@ -65,15 +97,14 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
           phone: null,
         };
       }
+      label = labelFor(classification);
     }
-
-    const label = USE_AI_CLASSIFICATION
-      ? labelFor(classification)
-      : { text: 'Без проверки ИИ', kind: 'unchecked' };
 
     const listing = {
       ...item,
       raw_text: rawText,
+      seller_name: sellerName,
+      seller_listings_count: sellerListingsCount,
       district: classification.district,
       rooms: classification.rooms,
       area: classification.area,
@@ -88,7 +119,11 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
 
     await saveListing(listing);
 
-    const shouldSend = USE_AI_CLASSIFICATION ? shouldNotify(classification) : true;
+    const shouldSend = isConfirmedAgentByProfile
+      ? false
+      : USE_AI_CLASSIFICATION
+        ? shouldNotify(classification)
+        : true;
 
     if (shouldSend) {
       try {
@@ -105,10 +140,11 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType) {
 }
 
 async function main() {
-  await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent');
-  await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale');
-  await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent');
+  // Продажа — в приоритете, проверяем её первой в каждом цикле
+  await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale', fetchOlxSellerListingsCount);
   await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale');
+  await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent', fetchOlxSellerListingsCount);
+  await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent');
   console.log('Проверка завершена.');
 }
 

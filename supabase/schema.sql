@@ -17,6 +17,8 @@ create table if not exists listings (
   confidence text,
   label_text text,
   label_kind text,
+  seller_name text,
+  seller_listings_count integer,
   notified boolean default false,
   contacted boolean default false,
   created_at timestamptz default now()

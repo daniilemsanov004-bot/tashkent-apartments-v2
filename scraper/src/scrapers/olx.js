@@ -52,12 +52,16 @@ export async function fetchOlxListings(dealType = 'rent') {
     const fullUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
 
     // Заголовок — берём текст самой ссылки; если пусто (ссылка на картинку) —
-    // пробуем alt у картинки внутри неё.
-    let title = link.text().trim();
+    // пробуем alt у картинки внутри неё. Сначала убираем <style>/<script>,
+    // которые OLX иногда вставляет прямо внутрь карточки (scoped-стили) —
+    // без этого .text() захватывал бы CSS-код вместо реального заголовка.
+    const linkClone = link.clone();
+    linkClone.find('style, script').remove();
+    let title = linkClone.text().trim();
     if (!title) {
       title = link.find('img').attr('alt')?.trim() || '';
     }
-    if (!title) return; // без заголовка карточка бесполезна — пропускаем
+    if (!title || title.startsWith('.css-')) return; // мусор вместо заголовка — пропускаем
 
     // Цену и дату публикации ищем в ближайшем родительском блоке-карточке —
     // поднимаемся на несколько уровней вверх и ищем текст, похожий на них.
@@ -106,8 +110,11 @@ export async function fetchOlxListings(dealType = 'rent') {
 }
 
 /**
- * Заходит на страницу конкретного объявления и вытаскивает полный текст
- * описания — он нужен для классификации "собственник/агент".
+ * Заходит на страницу конкретного объявления и вытаскивает:
+ * - полный текст описания (для классификации собственник/агент)
+ * - имя продавца (ещё один сигнал для классификации)
+ * - ссылку "Все объявления автора" (чтобы посчитать, сколько у него
+ *   объявлений — если много, это почти наверняка агентство)
  */
 export async function fetchOlxDetails(url) {
   const { data: html } = await getWithRetry(url, {
@@ -116,7 +123,61 @@ export async function fetchOlxDetails(url) {
   });
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
-  return description;
+
+  // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
+  // CSS-классу (он может меняться, а текст кнопки — вряд ли).
+  let sellerListingsUrl = null;
+  $('a').each((_, el) => {
+    const text = $(el).text().trim().toLowerCase();
+    if (text.includes('все объявления автора') || text.includes('все объявления продавца')) {
+      const href = $(el).attr('href');
+      if (href) {
+        sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+      }
+    }
+  });
+
+  // Имя продавца — точный селектор не подтверждён вживую, пробуем
+  // несколько распространённых вариантов разметки OLX.
+  let sellerName =
+    $('[data-cy="seller_name"]').text().trim() ||
+    $('[data-testid="seller-name"]').text().trim() ||
+    '';
+  if (!sellerName) {
+    // запасной вариант: заголовок рядом с найденной ссылкой на профиль
+    const link = $('a').filter((_, el) => $(el).text().trim().toLowerCase().includes('все объявления автора')).first();
+    sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
+  }
+
+  return { description, sellerName: sellerName || null, sellerListingsUrl };
+}
+
+/**
+ * Считает, сколько объявлений у продавца на его странице "Все объявления
+ * автора". Если их заметно больше одного-двух — это почти наверняка
+ * агентство/риелтор, даже если сам текст объявления звучит по-человечески.
+ * Возвращает null при ошибке (тогда просто не применяем это правило).
+ */
+export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
+  if (!sellerListingsUrl) return null;
+  try {
+    const { data: html } = await getWithRetry(
+      sellerListingsUrl,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 },
+      2
+    );
+    const $ = cheerio.load(html);
+    const ids = new Set();
+    $('a[href*="/d/obyavlenie/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      const m = href.match(LISTING_LINK_RE);
+      if (m) ids.add(m[1]);
+    });
+    return ids.size;
+  } catch (err) {
+    console.warn(`Не удалось посчитать объявления продавца (${sellerListingsUrl}):`, err.message);
+    return null;
+  }
 }
 
 /**

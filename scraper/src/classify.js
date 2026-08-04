@@ -96,6 +96,9 @@ export function labelFor(classification) {
   if (classification.seller_type === 'owner' && classification.confidence === 'high') {
     return { text: 'Собственник', kind: 'owner' };
   }
+  if (classification.seller_type === 'agent' && classification.confidence === 'high') {
+    return { text: 'Агентство (по тексту объявления)', kind: 'agent' };
+  }
   return { text: 'Сомнительно — проверьте сами', kind: 'uncertain' };
 }
 

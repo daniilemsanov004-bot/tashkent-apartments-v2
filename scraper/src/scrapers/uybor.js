@@ -8,6 +8,25 @@ const UYBOR_API = 'https://api.uybor.uz/api/v1/listings';
 const REGION_TASHKENT = 13;
 const CATEGORY_APARTMENTS = 7;
 
+/**
+ * Uybor отдаёt некоторые текстовые поля (в т.ч. похоже, title) не
+ * простой строкой, а объектом с переводами вида {ru: "...", uz: "...",
+ * "uz-latn": "..."}. Эта функция достаёт из такого объекта читаемую
+ * строку; если значение уже строка — просто возвращает её как есть.
+ */
+function localized(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    return (
+      value.ru || value.uz || value['uz-latn'] || value.en ||
+      Object.values(value).find((v) => typeof v === 'string' && v.trim()) ||
+      ''
+    );
+  }
+  return String(value);
+}
+
 // Сегодняшняя дата — фильтруем так же, как и OLX, чтобы не тащить
 // в базу старые объявления, поднятые платным продвижением.
 function isToday(dateStr) {
@@ -61,7 +80,10 @@ export async function fetchUyborListings(dealType = 'rent') {
     if (!id) continue;
 
     const title =
-      item.title || item.name || [item.category?.name, item.district?.name].filter(Boolean).join(', ') || 'Без названия';
+      localized(item.title) ||
+      localized(item.name) ||
+      [localized(item.category?.name), localized(item.district?.name)].filter(Boolean).join(', ') ||
+      'Без названия';
 
     const priceValue = item.price ?? item.priceEquivalent ?? '';
     const priceCurrency = item.priceCurrency || 'usd';

@@ -104,6 +104,11 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       };
       label = { text: `Агентство (${confirmedAgentReason})`, kind: 'agent' };
     } else if (!USE_AI_CLASSIFICATION) {
+      // Раньше эта ветка (без ИИ) писала "Без проверки ИИ" — но так как
+      // явные агентства уже отсеиваются жёсткими правилами чуть выше
+      // (isConfirmedAgent), то, что осталось непроверенным, почти всегда
+      // и есть частник — так и подписываем, чтобы не пугать формулировкой
+      // "не проверено".
       classification = {
         seller_type: 'unknown',
         confidence: 'n/a',
@@ -112,7 +117,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
         area: null,
         phone: null,
       };
-      label = { text: 'Без проверки ИИ', kind: 'unchecked' };
+      label = { text: 'Скорее всего собственник', kind: 'unchecked' };
     } else {
       try {
         classification = await classifyListing(rawText, sellerName);
@@ -171,11 +176,17 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     await saveListing(listing);
 
-    // Раньше подтверждённые агентства вообще не отправлялись в Telegram.
-    // Теперь отправляем всех — просто с понятной меткой ("🏢 Агентство"),
-    // чтобы риелторские объявления тоже было видно и можно было по ним
-    // фильтровать/искать через бота, а собственники остаются в приоритете
-    // (см. label_kind и сортировку в _priority.js / боте).
+    // Агентства (isConfirmedAgent) снова НЕ отправляем в Telegram —
+    // вернули как было раньше (пробовали показывать всех, но по
+    // фидбэку агентских объявлений слишком много и они мешают).
+    // В базу (saveListing выше) пишем всех — чтобы не парсить их
+    // заново на каждом прогоне, но notifyNewListing зовём только для
+    // тех, кто не агентство.
+    if (isConfirmedAgent) {
+      await markNotified(listing.id); // чтобы не пытались отправить его снова на будущих прогонах
+      continue;
+    }
+
     try {
       await notifyNewListing(listing);
       await markNotified(listing.id);

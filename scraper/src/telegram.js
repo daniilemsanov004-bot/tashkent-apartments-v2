@@ -58,7 +58,7 @@ export async function notifyNewListing(listing) {
     listing.label_kind === 'owner'
       ? '✅ Собственник'
       : listing.label_kind === 'unchecked'
-        ? '📋 Не проверено ИИ'
+        ? '🙂 Скорее всего собственник'
         : listing.label_kind === 'agent'
           ? '🏢 Похоже на агентство'
           : '❓ Сомнительно — проверьте сами';

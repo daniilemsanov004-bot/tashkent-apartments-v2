@@ -163,6 +163,10 @@ function listingPriceUzs(l) {
 async function runSearch(filters) {
   let query = supabase.from('listings').select('*').order('created_at', { ascending: false }).range(0, 999);
 
+  // Агентства (label_kind='agent') не показываем — как и на сайте/в
+  // push-уведомлениях, их снова полностью скрываем.
+  query = query.neq('label_kind', 'agent');
+
   if (filters.dealType) query = query.eq('deal_type', filters.dealType);
   if (filters.propertyType && filters.propertyType !== 'any') query = query.eq('property_type', filters.propertyType);
   if (filters.districts?.length) query = query.in('district', filters.districts);

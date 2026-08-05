@@ -91,6 +91,15 @@ export async function fetchUyborListings(dealType = 'rent') {
 
     const phone = item.user?.phone || item.phone || item.contactPhone || null;
 
+    // Uybor сам различает частных пользователей и организации — если
+    // у продавца заполнено поле organization, это гарантированно
+    // агентство/компания, а не частник. Надёжнее, чем гадать по тексту.
+    const sellerIsOrganization = !!item.user?.organization;
+    const sellerOrgName = sellerIsOrganization
+      ? localized(item.user.organization.name) || localized(item.user.organization.title) || null
+      : null;
+    const sellerName = sellerOrgName || item.user?.name || item.user?.fullName || null;
+
     listings.push({
       id: `uybor_${id}`,
       source: 'uybor',
@@ -102,6 +111,8 @@ export async function fetchUyborListings(dealType = 'rent') {
       price,
       posted_raw: postedRaw || 'неизвестно',
       phone_from_api: phone,
+      seller_is_organization: sellerIsOrganization,
+      seller_name: sellerName,
     });
   }
 

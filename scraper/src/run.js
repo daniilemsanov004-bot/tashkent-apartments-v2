@@ -35,7 +35,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     try {
       const details = await fetchDetails(item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
-      sellerName = details?.sellerName || null;
+      sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
     } catch (err) {
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
@@ -45,25 +45,37 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     const phoneFromText = phoneMatch ? phoneMatch[1] : null;
     const phoneFromApi = item.phone_from_api || null;
 
-    // Жёсткое правило (без ИИ, бесплатно): если у продавца много других
-    // объявлений о недвижимости — это агентство, точка. Работает
-    // независимо от USE_AI_CLASSIFICATION.
+    // Жёсткие правила (без ИИ, бесплатно), два источника — свои для
+    // каждого сайта:
+    //  - OLX: если у продавца много других объявлений — агентство.
+    //  - Uybor: сайт сам помечает аккаунт как организацию (не частник) —
+    //    это ещё надёжнее числа объявлений.
+    // Работает независимо от USE_AI_CLASSIFICATION.
     let sellerListingsCount = null;
-    let isConfirmedAgentByProfile = false;
+    let isConfirmedAgent = false;
+    let confirmedAgentReason = '';
+
     if (fetchSellerCount && sellerListingsUrl) {
       sellerListingsCount = await fetchSellerCount(sellerListingsUrl);
       if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
-        isConfirmedAgentByProfile = true;
-        console.log(
-          `[${sourceLabel}] продавец "${sellerName || '?'}" имеет ${sellerListingsCount} объявлений → агентство, в мусорку: ${item.title}`
-        );
+        isConfirmedAgent = true;
+        confirmedAgentReason = `${sellerListingsCount} объявлений`;
       }
+    }
+    if (!isConfirmedAgent && item.seller_is_organization) {
+      isConfirmedAgent = true;
+      confirmedAgentReason = 'аккаунт организации';
+    }
+    if (isConfirmedAgent) {
+      console.log(
+        `[${sourceLabel}] продавец "${sellerName || '?'}" — агентство (${confirmedAgentReason}), в мусорку: ${item.title}`
+      );
     }
 
     let classification;
     let label;
 
-    if (isConfirmedAgentByProfile) {
+    if (isConfirmedAgent) {
       classification = {
         seller_type: 'agent',
         confidence: 'high',
@@ -72,7 +84,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
         area: null,
         phone: null,
       };
-      label = { text: `Агентство (${sellerListingsCount} объявлений)`, kind: 'agent' };
+      label = { text: `Агентство (${confirmedAgentReason})`, kind: 'agent' };
     } else if (!USE_AI_CLASSIFICATION) {
       classification = {
         seller_type: 'unknown',
@@ -119,7 +131,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     await saveListing(listing);
 
-    const shouldSend = isConfirmedAgentByProfile
+    const shouldSend = isConfirmedAgent
       ? false
       : USE_AI_CLASSIFICATION
         ? shouldNotify(classification)

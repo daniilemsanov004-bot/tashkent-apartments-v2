@@ -4,12 +4,16 @@ create table if not exists listings (
   id text primary key,
   source text,
   deal_type text,
+  property_type text default 'apartment', -- 'apartment' | 'house' | 'commercial'
   url text,
   title text,
   price text,
   posted_raw text,
   raw_text text,
   district text,
+  district_raw text,
+  price_value numeric,
+  price_currency text, -- 'USD' | 'UZS'
   rooms integer,
   area double precision,
   phone text,
@@ -33,3 +37,12 @@ alter table listings enable row level security;
 
 create policy "Публичное чтение" on listings
   for select using (true);
+
+-- Состояние "мастера" поиска в Telegram-боте (см. client/api/telegram-webhook.js).
+create table if not exists bot_sessions (
+  chat_id bigint not null,
+  user_id bigint not null,
+  state jsonb not null default '{}'::jsonb,
+  updated_at timestamptz default now(),
+  primary key (chat_id, user_id)
+);

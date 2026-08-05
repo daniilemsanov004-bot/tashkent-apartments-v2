@@ -178,3 +178,12 @@ select{
 }
 
 .results-count{ font-size:12.5px; color:var(--text-faint); margin:0 0 0.8rem; }
+
+.config-error{
+  max-width:560px; margin:15vh auto; padding:1.5rem 1.8rem; text-align:left;
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+}
+.config-error h2{ margin:0 0 0.8rem; }
+.config-error code{
+  background:rgba(255,255,255,0.08); padding:0.1rem 0.4rem; border-radius:5px;
+}

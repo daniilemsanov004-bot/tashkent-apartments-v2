@@ -51,18 +51,23 @@ export async function notifyNewListing(listing) {
   const districtLine = listing.district ? `📍 ${listing.district}\n` : '';
   const phoneLine = listing.phone ? `📞 ${listing.phone}\n` : '';
   const dealLine = listing.deal_type === 'sale' ? '🏷️ Продажа\n' : listing.deal_type === 'rent' ? '🔑 Аренда\n' : '';
+  const typeLine =
+    listing.property_type === 'house' ? '🏡 Дом\n' : listing.property_type === 'commercial' ? '🏢 Коммерция\n' : '';
 
   const badge =
     listing.label_kind === 'owner'
       ? '✅ Собственник'
       : listing.label_kind === 'unchecked'
-        ? '📋 Новое объявление'
-        : '❓ Сомнительно — проверьте сами';
+        ? '📋 Не проверено ИИ'
+        : listing.label_kind === 'agent'
+          ? '🏢 Похоже на агентство'
+          : '❓ Сомнительно — проверьте сами';
 
   const message =
     `🏠 Новое объявление (${listing.source})\n` +
     `${badge}\n\n` +
     dealLine +
+    typeLine +
     `${roomsLine}${listing.title}${areaLine}\n` +
     `💰 ${listing.price || 'цена не указана'}\n` +
     districtLine +

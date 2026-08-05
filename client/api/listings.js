@@ -1,5 +1,6 @@
 import { supabase } from './_supabase.js';
 import { requireAuth } from './_auth.js';
+import { sortByPriority } from './_priority.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -28,13 +29,12 @@ export default async function handler(req, res) {
     query = query.gte('created_at', cutoff);
   }
 
-  // Подтверждённые агентства (label_kind = 'agent') не показываем вовсе —
-  // ни на сайте, ни (отдельно, в scraper) в Telegram. Они остаются в базе
-  // только для дедупликации, чтобы не обрабатывать их заново. Если
-  // когда-нибудь понадобится посмотреть, что было отфильтровано —
-  // добавить ?showAgents=true к запросу.
-  if (req.query.showAgents !== 'true') {
-    query = query.neq('label_kind', 'agent');
+  // Агентства больше не скрываются — показываем всех, но собственники
+  // всегда идут первыми (см. _priority.js). Если нужно посмотреть
+  // только собственников, это делается фильтром на самом сайте.
+  // ?onlyOwners=true — оставлено для обратной совместимости/отладки.
+  if (req.query.onlyOwners === 'true') {
+    query = query.eq('label_kind', 'owner');
   }
 
   const { data, error } = await query;
@@ -44,5 +44,5 @@ export default async function handler(req, res) {
     return;
   }
 
-  res.status(200).json(data);
+  res.status(200).json(sortByPriority(data));
 }

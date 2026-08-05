@@ -5,10 +5,27 @@ import { getWithRetry } from '../http.js';
 // объявления в каждом, не только помеченные сайтом "от собственника"
 // (часть реальных собственников просто не ставят эту галочку).
 // Фильтрацию собственник/агент делает классификация в classify.js.
-export const OLX_URLS = {
-  rent: 'https://www.olx.uz/nedvizhimost/kvartiry/arenda-dolgosrochnaya/tashkent/',
-  sale: 'https://www.olx.uz/nedvizhimost/kvartiry/prodazha/tashkent/',
+// Три категории недвижимости — у каждой свой URL-паттерн (проверено
+// вживую на olx.uz). property_type пишем в объявление, чтобы отличать
+// их на сайте/в боте фильтром.
+export const OLX_CATEGORIES = {
+  apartment: {
+    rent: 'https://www.olx.uz/nedvizhimost/kvartiry/arenda-dolgosrochnaya/tashkent/',
+    sale: 'https://www.olx.uz/nedvizhimost/kvartiry/prodazha/tashkent/',
+  },
+  house: {
+    rent: 'https://www.olx.uz/nedvizhimost/doma/arenda-dolgosrochnaya/tashkent/',
+    sale: 'https://www.olx.uz/nedvizhimost/doma/prodazha/tashkent/',
+  },
+  commercial: {
+    // у коммерции на OLX аренда называется просто "arenda", без "-dolgosrochnaya"
+    rent: 'https://www.olx.uz/nedvizhimost/kommercheskie-pomeshcheniya/arenda/tashkent/',
+    sale: 'https://www.olx.uz/nedvizhimost/kommercheskie-pomeshcheniya/prodazha/tashkent/',
+  },
 };
+
+// Оставлено для обратной совместимости (старые импорты в run.js/тестах).
+export const OLX_URLS = OLX_CATEGORIES.apartment;
 
 const LISTING_LINK_RE = /\/d\/obyavlenie\/[^"'\s]*-ID([a-zA-Z0-9]+)\.html/;
 const PRICE_RE = /[\d\s]{3,}\s*(?:сум|у\.?\s?е\.?)/i;
@@ -21,9 +38,10 @@ const DATE_META_RE = /(сегодня|вчера)\s*(?:в\s*\d{1,2}:\d{2})?|(\d{
 
 /**
  * @param {'rent'|'sale'} dealType
+ * @param {'apartment'|'house'|'commercial'} propertyType
  */
-export async function fetchOlxListings(dealType = 'rent') {
-  const url = OLX_URLS[dealType];
+export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartment') {
+  const url = OLX_CATEGORIES[propertyType][dealType];
   const { data: html } = await getWithRetry(url, {
     headers: {
       'User-Agent':
@@ -63,12 +81,27 @@ export async function fetchOlxListings(dealType = 'rent') {
     }
     if (!title || title.startsWith('.css-')) return; // мусор вместо заголовка — пропускаем
 
-    // Цену и дату публикации ищем в ближайшем родительском блоке-карточке —
-    // поднимаемся на несколько уровней вверх и ищем текст, похожий на них.
+    // Цену и дату публикации ищем в ближайшем родительском блоке-карточке.
+    // ВАЖНО: раньше здесь поднимались вверх на 5 уровней БЕЗ проверки, не
+    // вышли ли мы уже за пределы карточки этого объявления — на сеточной
+    // вёрстке OLX 3-4 уровня вверх обычно попадают в общий контейнер сразу
+    // нескольких карточек, и regex цены мог выхватить цену СОСЕДНЕГО
+    // объявления. Из-за этого у многих объявлений цена была неправильной.
+    // Теперь останавливаемся, как только в контейнере находится больше
+    // одного РАЗНЫХ объявления (считаем по уникальным ID из ссылок, а не
+    // по числу тегов <a> — у карточки обычно 2 ссылки на один и тот же
+    // объект: картинка + заголовок).
     let price = '';
     let dateRaw = '';
     let container = link.parent();
-    for (let i = 0; i < 5 && container.length; i++) {
+    for (let i = 0; i < 6 && container.length; i++) {
+      const idsInside = new Set();
+      container.find('a[href*="/d/obyavlenie/"]').each((_, a) => {
+        const m = ($(a).attr('href') || '').match(LISTING_LINK_RE);
+        if (m) idsInside.add(m[1]);
+      });
+      if (idsInside.size > 1) break; // вышли за пределы карточки — не читаем дальше
+
       const text = container.text();
       if (!price) {
         const priceMatch = text.match(PRICE_RE);
@@ -95,6 +128,7 @@ export async function fetchOlxListings(dealType = 'rent') {
       id: `olx_${externalId}`,
       source: 'olx',
       deal_type: dealType, // 'rent' | 'sale'
+      property_type: propertyType, // 'apartment' | 'house' | 'commercial'
       url: fullUrl,
       title,
       price,

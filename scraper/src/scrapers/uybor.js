@@ -8,6 +8,13 @@ const UYBOR_API = 'https://api.uybor.uz/api/v1/listings';
 const REGION_TASHKENT = 13;
 const CATEGORY_APARTMENTS = 7;
 
+// TODO: узнать category__eq для "Дома" и "Коммерция" на uybor.uz —
+// открыть сайт → DevTools → Network → XHR, выбрать эти категории в
+// фильтре и посмотреть параметр category__eq в запросе к
+// api.uybor.uz/api/v1/listings. Как только известны — добавить сюда
+// по аналогии с CATEGORY_APARTMENTS и завести fetchUyborListings(dealType,
+// propertyType) так же, как уже сделано в scrapers/olx.js.
+
 /**
  * Uybor отдаёt некоторые текстовые поля (в т.ч. похоже, title) не
  * простой строкой, а объектом с переводами вида {ru: "...", uz: "...",
@@ -100,10 +107,18 @@ export async function fetchUyborListings(dealType = 'rent') {
       : null;
     const sellerName = sellerOrgName || item.user?.name || item.user?.fullName || null;
 
+    // Uybor отдаёт район структурно (через ?embed=district) — самый
+    // надёжный источник района из всех сайтов, используем напрямую,
+    // без необходимости в ИИ-классификации или поиске по тексту.
+    // См. normalizeDistrict() в run.js, который приводит это к
+    // каноничному названию.
+    const rawDistrict = localized(item.district?.name) || null;
+
     listings.push({
       id: `uybor_${id}`,
       source: 'uybor',
       deal_type: dealType,
+      property_type: 'apartment', // пока только квартиры, см. TODO выше
       // Точный формат URL объявления на uybor.uz не подтверждён —
       // если ссылка окажется нерабочей, поправить тут после проверки.
       url: `https://uybor.uz/listings/${id}`,
@@ -113,6 +128,7 @@ export async function fetchUyborListings(dealType = 'rent') {
       phone_from_api: phone,
       seller_is_organization: sellerIsOrganization,
       seller_name: sellerName,
+      raw_district: rawDistrict,
     });
   }
 

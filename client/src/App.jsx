@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { supabase } from './lib/supabaseClient.js';
+import { supabase, supabaseConfigMissing } from './lib/supabaseClient.js';
 
 const REFRESH_MS = 15000;
 
@@ -27,6 +27,12 @@ function dealTag(dealType) {
   return null;
 }
 
+function propertyTypeLabel(propertyType) {
+  if (propertyType === 'house') return '🏡 Дом';
+  if (propertyType === 'commercial') return '🏢 Коммерция';
+  return '🏠 Квартира';
+}
+
 function Card({ listing, onToggleContacted }) {
   const badge = badgeFor(listing);
   return (
@@ -38,6 +44,7 @@ function Card({ listing, onToggleContacted }) {
           </p>
           <p className="card-meta">
             {dealTag(listing.deal_type)}
+            <span className="source-tag">{propertyTypeLabel(listing.property_type)}</span>
             <span className="source-tag">{listing.source}</span>
             &nbsp;·&nbsp;{timeAgo(listing.created_at)}
             {listing.district ? ` · 📍 ${listing.district}` : ''}
@@ -203,6 +210,28 @@ function TeamPanel({ authFetch, myEmail, onClose }) {
 // ---------- Основной дашборд ----------
 
 export default function App() {
+  if (supabaseConfigMissing) {
+    return (
+      <div className="config-error">
+        <h2>⚠️ Сайт не настроен</h2>
+        <p>
+          Не заданы переменные окружения <code>VITE_SUPABASE_URL</code> и{' '}
+          <code>VITE_SUPABASE_ANON_KEY</code>.
+        </p>
+        <p>
+          В Vercel: Project Settings → Environment Variables — добавьте обе,
+          затем сделайте <b>Redeploy</b> (одного добавления переменной
+          недостаточно, нужна пересборка). Значения — в Supabase → Project
+          Settings → API Keys (anon public ключ).
+        </p>
+      </div>
+    );
+  }
+
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const [session, setSession] = useState(undefined); // undefined = ещё проверяем
   const [authorized, setAuthorized] = useState(null); // null = не проверено, true/false после первого запроса
   const [showTeam, setShowTeam] = useState(false);
@@ -211,6 +240,7 @@ export default function App() {
   const [statusText, setStatusText] = useState('Загрузка…');
   const [search, setSearch] = useState('');
   const [dealFilter, setDealFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [contactedFilter, setContactedFilter] = useState('all');
   const [daysRange, setDaysRange] = useState('3');
@@ -281,6 +311,7 @@ export default function App() {
   const resetFilters = useCallback(() => {
     setSearch('');
     setDealFilter('all');
+    setTypeFilter('all');
     setBadgeFilter('all');
     setContactedFilter('all');
   }, []);
@@ -295,13 +326,15 @@ export default function App() {
       if (badgeFilter === 'owner' && l.label_kind !== 'owner') return false;
       if (badgeFilter === 'unsure' && l.label_kind !== 'unsure') return false;
       if (dealFilter !== 'all' && l.deal_type !== dealFilter) return false;
+      if (typeFilter !== 'all' && (l.property_type || 'apartment') !== typeFilter) return false;
       if (contactedFilter === 'contacted' && !l.contacted) return false;
       if (contactedFilter === 'not-contacted' && l.contacted) return false;
       return true;
     });
-  }, [listings, search, dealFilter, badgeFilter, contactedFilter]);
+  }, [listings, search, dealFilter, typeFilter, badgeFilter, contactedFilter]);
 
-  const filtersActive = search || dealFilter !== 'all' || badgeFilter !== 'all' || contactedFilter !== 'all';
+  const filtersActive =
+    search || dealFilter !== 'all' || typeFilter !== 'all' || badgeFilter !== 'all' || contactedFilter !== 'all';
 
   const stats = useMemo(() => {
     const total = listings.length;
@@ -370,6 +403,12 @@ export default function App() {
             <option value="all">Аренда и продажа</option>
             <option value="rent">Только аренда</option>
             <option value="sale">Только продажа</option>
+          </select>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="all">Все типы</option>
+            <option value="apartment">Квартиры</option>
+            <option value="house">Дома</option>
+            <option value="commercial">Коммерция</option>
           </select>
           <select value={badgeFilter} onChange={(e) => setBadgeFilter(e.target.value)}>
             <option value="all">Все объявления</option>

@@ -1,10 +1,14 @@
 import { supabase } from './_supabase.js';
+import { requireAuth } from './_auth.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'method not allowed' });
     return;
   }
+
+  const email = await requireAuth(req, res);
+  if (!email) return;
 
   const { id, contacted } = req.body || {};
   if (!id) {

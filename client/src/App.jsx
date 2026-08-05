@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { supabase } from './lib/supabaseClient.js';
 
 const REFRESH_MS = 15000;
 
@@ -66,56 +67,222 @@ function Card({ listing, onToggleContacted }) {
   );
 }
 
+// ---------- Экран входа ----------
+
+function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const sendLink = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const { error: authError } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setLoading(false);
+    if (authError) {
+      setError(authError.message);
+      return;
+    }
+    setSent(true);
+  };
+
+  return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="eyebrow">Ташкент · недвижимость</div>
+        <h1>Вход в систему</h1>
+        {sent ? (
+          <p className="auth-hint">
+            Ссылка для входа отправлена на <b>{email}</b>. Откройте почту и перейдите по ссылке —
+            вернётесь сюда уже авторизованным.
+          </p>
+        ) : (
+          <form onSubmit={sendLink}>
+            <input
+              type="email"
+              required
+              placeholder="ваш email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <button className="btn btn-primary" type="submit" disabled={loading}>
+              {loading ? 'Отправляю…' : 'Получить ссылку для входа'}
+            </button>
+            {error && <p className="auth-error">{error}</p>}
+          </form>
+        )}
+        <p className="auth-footnote">
+          Доступ есть только у приглашённых. Если вас ещё не добавили — попросите
+          кого-то из команды пригласить ваш email.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NotAuthorizedScreen({ email, onSignOut }) {
+  return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="eyebrow">Ташкент · недвижимость</div>
+        <h1>Нет доступа</h1>
+        <p className="auth-hint">
+          Вы вошли как <b>{email}</b>, но этого email нет в списке команды.
+          Попросите кого-то, у кого уже есть доступ, пригласить вас.
+        </p>
+        <button className="btn" onClick={onSignOut}>Выйти</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Панель команды ----------
+
+function TeamPanel({ authFetch, myEmail, onClose }) {
+  const [members, setMembers] = useState([]);
+  const [newEmail, setNewEmail] = useState('');
+  const [status, setStatus] = useState('');
+
+  const load = useCallback(async () => {
+    const res = await authFetch('/api/team');
+    if (res?.ok) setMembers(await res.json());
+  }, [authFetch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const invite = async (e) => {
+    e.preventDefault();
+    setStatus('Приглашаю…');
+    const res = await authFetch('/api/team', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: newEmail.trim() }),
+    });
+    if (res?.ok) {
+      setStatus('Готово ✓');
+      setNewEmail('');
+      load();
+    } else {
+      setStatus('Не получилось — проверьте email');
+    }
+  };
+
+  return (
+    <div className="team-panel">
+      <div className="team-panel-header">
+        <h3>Команда</h3>
+        <button className="btn" onClick={onClose}>Закрыть</button>
+      </div>
+      <ul className="team-list">
+        {members.map((m) => (
+          <li key={m.email}>
+            {m.email} {m.email === myEmail && <span className="you-tag">это вы</span>}
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={invite} className="team-invite-form">
+        <input
+          type="email"
+          required
+          placeholder="email нового человека"
+          value={newEmail}
+          onChange={(e) => setNewEmail(e.target.value)}
+        />
+        <button className="btn btn-primary" type="submit">Пригласить</button>
+      </form>
+      {status && <p className="auth-hint">{status}</p>}
+    </div>
+  );
+}
+
+// ---------- Основной дашборд ----------
+
 export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = ещё проверяем
+  const [authorized, setAuthorized] = useState(null); // null = не проверено, true/false после первого запроса
+  const [showTeam, setShowTeam] = useState(false);
+
   const [listings, setListings] = useState([]);
   const [statusText, setStatusText] = useState('Загрузка…');
   const [search, setSearch] = useState('');
   const [dealFilter, setDealFilter] = useState('all');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [contactedFilter, setContactedFilter] = useState('all');
+  const [daysRange, setDaysRange] = useState('3');
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const authFetch = useCallback(
+    async (url, options = {}) => {
+      if (!session?.access_token) return null;
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      if (res.status === 401) {
+        setAuthorized(false);
+        return null;
+      }
+      setAuthorized(true);
+      return res;
+    },
+    [session]
+  );
 
   const fetchListings = useCallback(async () => {
+    const res = await authFetch(`/api/listings?days=${daysRange}`);
+    if (!res) return;
     try {
-      const res = await fetch('/api/listings');
       const data = await res.json();
       setListings(data);
       setStatusText('Обновлено ' + new Date().toLocaleTimeString('ru-RU'));
     } catch (err) {
       setStatusText('Не удалось связаться с сервером');
     }
-  }, []);
+  }, [authFetch, daysRange]);
 
   useEffect(() => {
+    if (!session) return;
     fetchListings();
     const id = setInterval(fetchListings, REFRESH_MS);
     return () => clearInterval(id);
-  }, [fetchListings]);
+  }, [session, fetchListings]);
 
   const toggleContacted = useCallback(async (id, next) => {
-    // оптимистичное обновление — сразу видно в интерфейсе
     setListings((prev) => prev.map((l) => (l.id === id ? { ...l, contacted: next } : l)));
-    try {
-      await fetch(`/api/contacted`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, contacted: next }),
-      });
-    } catch (err) {
-      console.error('Не удалось обновить статус:', err);
-    }
-  }, []);
+    await authFetch(`/api/contacted`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, contacted: next }),
+    });
+  }, [authFetch]);
 
   const clearAll = useCallback(async () => {
     const confirmed = window.confirm(
       'Удалить все объявления из базы? Это нельзя отменить. При следующей проверке сегодняшние объявления придут заново.'
     );
     if (!confirmed) return;
-    try {
-      await fetch('/api/clear', { method: 'POST' });
-      setListings([]);
-    } catch (err) {
-      console.error('Не удалось очистить базу:', err);
-    }
+    const res = await authFetch('/api/clear', { method: 'POST' });
+    if (res?.ok) setListings([]);
+  }, [authFetch]);
+
+  const resetFilters = useCallback(() => {
+    setSearch('');
+    setDealFilter('all');
+    setBadgeFilter('all');
+    setContactedFilter('all');
   }, []);
 
   const filtered = useMemo(() => {
@@ -134,6 +301,8 @@ export default function App() {
     });
   }, [listings, search, dealFilter, badgeFilter, contactedFilter]);
 
+  const filtersActive = search || dealFilter !== 'all' || badgeFilter !== 'all' || contactedFilter !== 'all';
+
   const stats = useMemo(() => {
     const total = listings.length;
     const owners = listings.filter((l) => l.label_kind === 'owner').length;
@@ -146,17 +315,41 @@ export default function App() {
     return { total, owners, notContacted, today };
   }, [listings]);
 
+  // ---- Экраны в зависимости от состояния авторизации ----
+
+  if (session === undefined) {
+    return <div className="auth-screen"><p className="auth-hint">Загрузка…</p></div>;
+  }
+  if (!session) {
+    return <LoginScreen />;
+  }
+  if (authorized === false) {
+    return <NotAuthorizedScreen email={session.user.email} onSignOut={() => supabase.auth.signOut()} />;
+  }
+
   return (
     <>
       <header>
-        <div className="eyebrow">Ташкент · недвижимость</div>
-        <h1>Лента новых объявлений</h1>
-        <p className="subtitle">Аренда и продажа · OLX.uz + Uybor.uz</p>
+        <div className="header-top">
+          <div>
+            <div className="eyebrow">Ташкент · недвижимость</div>
+            <h1>Лента новых объявлений</h1>
+            <p className="subtitle">Аренда и продажа · OLX.uz + Uybor.uz</p>
+          </div>
+          <div className="header-actions">
+            <button className="btn" onClick={() => setShowTeam(true)}>👥 Команда</button>
+            <button className="btn" onClick={() => supabase.auth.signOut()}>Выйти</button>
+          </div>
+        </div>
         <div className="status-bar">
           <span className="dot" />
-          <span>{statusText}</span>
+          <span>{statusText} · {session.user.email}</span>
         </div>
       </header>
+
+      {showTeam && (
+        <TeamPanel authFetch={authFetch} myEmail={session.user.email} onClose={() => setShowTeam(false)} />
+      )}
 
       <main>
         <div className="stats">
@@ -183,19 +376,31 @@ export default function App() {
             <option value="owner">Только собственники</option>
             <option value="unsure">Сомнительные</option>
           </select>
+          <select value={daysRange} onChange={(e) => setDaysRange(e.target.value)}>
+            <option value="3">За 3 дня</option>
+            <option value="7">За неделю</option>
+            <option value="all">Вся история</option>
+          </select>
           <select value={contactedFilter} onChange={(e) => setContactedFilter(e.target.value)}>
             <option value="all">Все (связались/нет)</option>
             <option value="not-contacted">Ещё не связались</option>
             <option value="contacted">Уже связались</option>
           </select>
+          {filtersActive && (
+            <button className="btn" onClick={resetFilters}>Сбросить фильтры</button>
+          )}
           <button className="btn btn-danger" onClick={clearAll}>Очистить базу</button>
         </div>
+
+        <p className="results-count">Показано: {filtered.length} из {listings.length}</p>
 
         <div className="feed">
           {filtered.length === 0 ? (
             <div className="empty">
               <div className="big">Пока пусто</div>
-              Объявления появятся здесь, как только сервер найдёт новые
+              {listings.length === 0
+                ? 'Объявления появятся здесь, как только сервер найдёт новые'
+                : 'Ничего не подходит под текущие фильтры'}
             </div>
           ) : (
             filtered.map((l) => (

@@ -131,3 +131,50 @@ select{
 .source-tag{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); }
 .empty{ text-align:center; padding:4rem 1rem; color:var(--text-faint); }
 .empty .big{ font-family:'Fraunces', serif; font-size:1.3rem; color:var(--text-dim); margin-bottom:0.4rem; }
+
+/* Вход / авторизация */
+.auth-screen{
+  min-height:100vh; display:flex; align-items:center; justify-content:center; padding:2rem;
+}
+.auth-card{
+  max-width:400px; width:100%;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:2rem;
+}
+.auth-card h1{ font-size:1.6rem; margin:0 0 1.2rem; }
+.auth-card form{ display:flex; flex-direction:column; gap:10px; }
+.auth-card input[type="email"]{
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+  padding:0.7rem 0.9rem; color:var(--text); font-size:14px; font-family:inherit;
+}
+.auth-card input[type="email"]:focus{ outline:none; border-color:var(--accent); }
+.auth-hint{ font-size:14px; color:var(--text-dim); line-height:1.5; margin:0.8rem 0; }
+.auth-error{ font-size:13px; color:var(--danger); margin:0; }
+.auth-footnote{ font-size:12.5px; color:var(--text-faint); margin-top:1.4rem; line-height:1.5; }
+
+/* Шапка с действиями */
+.header-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+.header-actions{ display:flex; gap:8px; margin-top:0.3rem; }
+
+/* Панель команды */
+.team-panel{
+  max-width:960px; margin:0 auto; padding:0 2rem;
+}
+.team-panel-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem; }
+.team-panel-header h3{ font-family:'Fraunces', serif; font-size:1.2rem; margin:0; }
+.team-list{
+  list-style:none; padding:0; margin:0 0 1rem;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+}
+.team-list li{
+  padding:0.7rem 1rem; font-size:14px; border-bottom:1px solid var(--border);
+}
+.team-list li:last-child{ border-bottom:none; }
+.you-tag{ color:var(--accent); font-size:12px; margin-left:6px; }
+.team-invite-form{ display:flex; gap:8px; margin-bottom:2rem; }
+.team-invite-form input{
+  flex:1; background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:0.6rem 0.9rem; color:var(--text); font-size:14px; font-family:inherit;
+}
+
+.results-count{ font-size:12.5px; color:var(--text-faint); margin:0 0 0.8rem; }

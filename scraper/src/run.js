@@ -3,7 +3,7 @@ import { fetchOlxListings, fetchOlxDetails, fetchOlxSellerListingsCount } from '
 import { fetchUyborListings, fetchUyborDetails } from './scrapers/uybor.js';
 import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting.js';
 import { classifyListing, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
-import { notifyNewListing, notifyAlert, notifyToTopicGroup } from './telegram.js';
+import { notifyAlert, notifyToTopicGroup } from './telegram.js';
 import { isKnown, saveListing, markNotified } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
@@ -185,7 +185,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // вернули как было раньше (пробовали показывать всех, но по
     // фидбэку агентских объявлений слишком много и они мешают).
     // В базу (saveListing выше) пишем всех — чтобы не парсить их
-    // заново на каждом прогоне, но notifyNewListing зовём только для
+    // заново на каждом прогоне, но notifyToTopicGroup зовём только для
     // тех, кто не агентство.
     if (isConfirmedAgent) {
       await markNotified(listing.id); // чтобы не пытались отправить его снова на будущих прогонах
@@ -193,8 +193,15 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     }
 
     try {
-      await notifyNewListing(listing);
-      await notifyToTopicGroup(listing); // дублируем в тематическую супергруппу (по типу+району)
+      // Раньше тут ещё был notifyNewListing() — отправка ВСЕХ объявлений
+      // (любого типа) в основной чат без привязки к теме. Убрали: он
+      // приводил к тому, что в тему "General" супергруппы "Квартиры"
+      // (это тот же чат, что и TELEGRAM_CHAT_ID) попадали вперемешку и
+      // дома, и коммерция. notifyToTopicGroup сам по себе уже даёт
+      // нужное: квартиры с известным районом уходят в свою тему, без
+      // района — в "General" СВОЕЙ группы (но по-прежнему только
+      // квартиры), а дома/коммерция — только в свои отдельные группы.
+      await notifyToTopicGroup(listing);
       await markNotified(listing.id);
       console.log(`[${sourceLabel}] уведомление отправлено (${label.kind}): ${listing.title}`);
     } catch (err) {

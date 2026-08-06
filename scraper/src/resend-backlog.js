@@ -44,15 +44,18 @@ function saveProgress(doneIds) {
   fs.writeFileSync(PROGRESS_FILE, JSON.stringify([...doneIds]));
 }
 
-// По умолчанию — вчерашний календарный день по Ташкенту (UTC+5).
+// По умолчанию — СЕГОДНЯШНИЙ календарный день по Ташкенту (UTC+5), от
+// полуночи до текущего момента. Раньше здесь считался вчерашний день —
+// но диагностика (06.08.2026) показала, что вся база (6126 записей)
+// создана СЕГОДНЯ, а не вчера, так что "вчера" всегда возвращал 0.
 function defaultRange() {
   const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
   const nowTashkent = new Date(Date.now() + TASHKENT_OFFSET_MS);
   const todayTashkent = new Date(
     Date.UTC(nowTashkent.getUTCFullYear(), nowTashkent.getUTCMonth(), nowTashkent.getUTCDate())
   );
-  const from = new Date(todayTashkent.getTime() - 24 * 60 * 60 * 1000 - TASHKENT_OFFSET_MS);
-  const to = new Date(todayTashkent.getTime() - TASHKENT_OFFSET_MS);
+  const from = new Date(todayTashkent.getTime() - TASHKENT_OFFSET_MS);
+  const to = new Date(); // до текущего момента, а не до полуночи — иначе обрежет последние часы
   return { from: from.toISOString(), to: to.toISOString() };
 }
 

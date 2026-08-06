@@ -38,3 +38,36 @@ export async function markNotified(id) {
     console.error('Supabase (markNotified) ошибка:', error.message);
   }
 }
+
+/**
+ * Возвращает message_thread_id темы для пары (groupKey, district),
+ * или null, если такой темы ещё нет (тогда сообщение уйдёт в общую
+ * тему группы без привязки к теме).
+ */
+export async function getTopicId(groupKey, district) {
+  if (!district) return null;
+  const { data, error } = await supabase
+    .from('forum_topics')
+    .select('message_thread_id')
+    .eq('group_key', groupKey)
+    .eq('district', district)
+    .maybeSingle();
+  if (error) {
+    console.error('Supabase (getTopicId) ошибка:', error.message);
+    return null;
+  }
+  return data?.message_thread_id ?? null;
+}
+
+/**
+ * Сохраняет ID темы после того, как она создана в Telegram
+ * (см. scraper/src/setup-topics.js).
+ */
+export async function saveTopicId(groupKey, district, messageThreadId) {
+  const { error } = await supabase
+    .from('forum_topics')
+    .upsert({ group_key: groupKey, district, message_thread_id: messageThreadId }, { onConflict: 'group_key,district' });
+  if (error) {
+    console.error('Supabase (saveTopicId) ошибка:', error.message);
+  }
+}

@@ -3,7 +3,7 @@ import { fetchOlxListings, fetchOlxDetails, fetchOlxSellerListingsCount } from '
 import { fetchUyborListings, fetchUyborDetails } from './scrapers/uybor.js';
 import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting.js';
 import { classifyListing, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
-import { notifyNewListing, notifyAlert } from './telegram.js';
+import { notifyNewListing, notifyAlert, notifyToTopicGroup } from './telegram.js';
 import { isKnown, saveListing, markNotified } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
@@ -189,6 +189,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     try {
       await notifyNewListing(listing);
+      await notifyToTopicGroup(listing); // дублируем в тематическую супергруппу (по типу+району)
       await markNotified(listing.id);
       console.log(`[${sourceLabel}] уведомление отправлено (${label.kind}): ${listing.title}`);
     } catch (err) {

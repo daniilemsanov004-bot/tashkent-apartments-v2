@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { getTopicId } from './db.js';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const chatId = (process.env.TELEGRAM_CHAT_ID || '').trim();
@@ -69,12 +70,11 @@ function buildHashtags(listing) {
   return tags.filter(Boolean).join(' ');
 }
 
-export async function notifyNewListing(listing) {
-  if (!bot || !chatId) {
-    console.warn('Telegram не настроен — пропускаю уведомление');
-    return;
-  }
-
+/**
+ * Собирает текст сообщения и кнопки — общая логика для обоих
+ * назначений (основная группа с /find и тематические супергруппы).
+ */
+function buildMessagePayload(listing) {
   const roomsLine = listing.rooms ? `${listing.rooms}-комн. ` : '';
   const areaLine = listing.area ? `, ${listing.area} м²` : '';
   const districtLine = listing.district ? `📍 ${listing.district}\n` : '';
@@ -103,9 +103,6 @@ export async function notifyNewListing(listing) {
     phoneLine +
     `\n${listing.url}`;
 
-  // Если номер удалось получить — добавляем кнопки для быстрой связи.
-  // tel:-ссылка не терпит пробелов/дефисов — Telegram отклоняет всю
-  // кнопку с ошибкой "Wrong port number specified in the URL".
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
@@ -118,10 +115,54 @@ export async function notifyNewListing(listing) {
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
 
+  return { message, buttons };
+}
+
+export async function notifyNewListing(listing) {
+  if (!bot || !chatId) {
+    console.warn('Telegram не настроен — пропускаю уведомление');
+    return;
+  }
+
+  const { message, buttons } = buildMessagePayload(listing);
+
   await bot.sendMessage(chatId, message, {
     disable_web_page_preview: false,
     reply_markup: { inline_keyboard: buttons },
   });
+}
+
+// Соответствие property_type → переменная окружения с chat_id группы.
+const TOPIC_GROUPS = {
+  apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
+  commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
+  house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
+};
+
+/**
+ * Отправляет объявление в тему нужного района внутри одной из 3
+ * супергрупп (Квартиры/Коммерция/Дома), в зависимости от property_type.
+ * Если группа для этого типа не настроена (нет в .env) — просто
+ * ничего не делает, молча. Если район неизвестен/тема ещё не создана
+ * (setup-topics.js не запускали для него) — уходит в общую тему группы.
+ */
+export async function notifyToTopicGroup(listing) {
+  const groupKey = listing.property_type || 'apartment';
+  const targetChatId = TOPIC_GROUPS[groupKey];
+  if (!bot || !targetChatId) return;
+
+  const { message, buttons } = buildMessagePayload(listing);
+  const messageThreadId = await getTopicId(groupKey, listing.district);
+
+  try {
+    await bot.sendMessage(targetChatId, message, {
+      disable_web_page_preview: false,
+      reply_markup: { inline_keyboard: buttons },
+      ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
+    });
+  } catch (err) {
+    console.error(`Не удалось отправить в тематическую супергруппу (${groupKey}):`, err.message);
+  }
 }
 
 /**

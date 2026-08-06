@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Установка зависимостей
         run: npm install
@@ -30,5 +30,8 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_GROUP_APARTMENT: ${{ secrets.TELEGRAM_GROUP_APARTMENT }}
+          TELEGRAM_GROUP_COMMERCIAL: ${{ secrets.TELEGRAM_GROUP_COMMERCIAL }}
+          TELEGRAM_GROUP_HOUSE: ${{ secrets.TELEGRAM_GROUP_HOUSE }}
           USE_AI_CLASSIFICATION: ${{ secrets.USE_AI_CLASSIFICATION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

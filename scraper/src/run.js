@@ -55,6 +55,13 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
       // тексте, потому что это самое надёжное поле, когда доступно.
       if (details?.phone) item.phone_from_details = details.phone;
+      // Бизнес-аккаунт по прямой метке OLX ("Бизнес" на странице
+      // объявления, см. fetchOlxDetails) — приравниваем к
+      // seller_is_organization, чтобы сработала уже существующая
+      // проверка чуть ниже (та же, что и для организаций Uybor).
+      // Это самый надёжный сигнал агентства для OLX — надёжнее, чем
+      // подсчёт объявлений продавца (см. fetchOlxSellerListingsCount).
+      if (details?.isBusinessAccount) item.seller_is_organization = true;
       // Структурное поле "район" со страницы объявления (сейчас — блок
       // "МЕСТОПОЛОЖЕНИЕ" на OLX, см. fetchOlxDetails). У Uybor
       // raw_district уже выставлен на этапе списка (fetchUyborListings),

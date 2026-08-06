@@ -31,6 +31,7 @@ import { supabase } from './_supabase.js';
 import { sendMessage, editMessageText, answerCallbackQuery, escapeHtml } from './_telegramApi.js';
 import { DISTRICTS, districtSlug, districtFromSlug } from './_districts.js';
 import { parsePriceRange } from './_priceParser.js';
+import { buildListingText, buildListingButtons } from './_listingMessage.js';
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 11990;
@@ -55,7 +56,61 @@ async function saveSession(chatId, userId, state) {
     .upsert({ chat_id: chatId, user_id: userId, state, updated_at: new Date().toISOString() });
 }
 
-// ---------- keyboards ----------
+function displayName(from) {
+  if (!from) return 'Агент';
+  if (from.username) return `@${from.username}`;
+  return [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Агент';
+}
+
+// ---------- кнопки "Связался" / "Беру в работу" на карточках объявлений ----------
+// Не часть мастера поиска (bot_sessions) — работают на самих
+// сообщениях-объявлениях в супергруппах, независимо от сессии.
+
+async function refreshListingMessage(chatId, messageId, listingId) {
+  const { data: listing, error } = await supabase.from('listings').select('*').eq('id', listingId).maybeSingle();
+  if (error || !listing) {
+    console.error('Не удалось перечитать объявление для обновления карточки:', error?.message || 'не найдено');
+    return null;
+  }
+  await editMessageText(chatId, messageId, buildListingText(listing), {
+    reply_markup: { inline_keyboard: buildListingButtons(listing) },
+  });
+  return listing;
+}
+
+async function toggleContacted(chatId, messageId, listingId, agentName, callbackId) {
+  const { data: current } = await supabase.from('listings').select('contacted').eq('id', listingId).maybeSingle();
+  const next = !current?.contacted;
+  await supabase
+    .from('listings')
+    .update({
+      contacted: next,
+      contacted_by: next ? agentName : null,
+      contacted_at: next ? new Date().toISOString() : null,
+    })
+    .eq('id', listingId);
+  await refreshListingMessage(chatId, messageId, listingId);
+  await answerCallbackQuery(callbackId, next ? '✅ Отмечено' : 'Отметка снята');
+}
+
+async function toggleAssigned(chatId, messageId, listingId, agentName, callbackId) {
+  const { data: current } = await supabase.from('listings').select('assigned_to').eq('id', listingId).maybeSingle();
+  if (current?.assigned_to && current.assigned_to !== agentName) {
+    // Уже кто-то другой взял в работу — не перехватываем молча, а
+    // показываем всплывающее уведомление, чтобы не звонили вдвоём.
+    await answerCallbackQuery(callbackId, `Уже взял в работу: ${current.assigned_to}`);
+    return;
+  }
+  const next = current?.assigned_to ? null : agentName; // повторное нажатие тем же агентом — освобождает
+  await supabase
+    .from('listings')
+    .update({ assigned_to: next, assigned_at: next ? new Date().toISOString() : null })
+    .eq('id', listingId);
+  await refreshListingMessage(chatId, messageId, listingId);
+  await answerCallbackQuery(callbackId, next ? '👤 Взято в работу' : 'Освобождено');
+}
+
+
 
 function dealTypeKeyboard() {
   return [[{ text: '🔑 Аренда', callback_data: 'dt:rent' }, { text: '🏷️ Продажа', callback_data: 'dt:sale' }]];
@@ -262,6 +317,18 @@ async function handleCallback(update) {
   const chatId = cb.message.chat.id;
   const userId = cb.from.id;
   const messageId = cb.message.message_id;
+
+  // Кнопки на карточках объявлений ("Связался"/"Беру в работу") — не
+  // часть мастера поиска, обрабатываем сразу и выходим, до всей
+  // остальной логики сессий ниже.
+  if (data.startsWith('ct:')) {
+    await toggleContacted(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
+    return;
+  }
+  if (data.startsWith('as:')) {
+    await toggleAssigned(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
+    return;
+  }
 
   await answerCallbackQuery(cb.id);
 

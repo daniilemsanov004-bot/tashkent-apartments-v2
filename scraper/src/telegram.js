@@ -132,22 +132,38 @@ export async function notifyNewListing(listing) {
   });
 }
 
-// Соответствие property_type → переменная окружения с chat_id группы.
+// Соответствие property_type (+ deal_type для аренды квартир — у неё
+// отдельная супергруппа) → переменная окружения с chat_id группы.
 const TOPIC_GROUPS = {
   apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
+  apartment_rent: (process.env.TELEGRAM_GROUP_APARTMENT_RENT || '').trim(),
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
   house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
 };
 
 /**
- * Отправляет объявление в тему нужного района внутри одной из 3
- * супергрупп (Квартиры/Коммерция/Дома), в зависимости от property_type.
- * Если группа для этого типа не настроена (нет в .env) — просто
- * ничего не делает, молча. Если район неизвестен/тема ещё не создана
- * (setup-topics.js не запускали для него) — уходит в общую тему группы.
+ * Аренда квартир — единственный случай, где группа зависит не только
+ * от property_type, но и от deal_type (продажа квартир остаётся в
+ * обычной группе "Квартиры"). Если TELEGRAM_GROUP_APARTMENT_RENT ещё
+ * не настроена — просто уходит в общую группу "Квартиры", как раньше,
+ * ничего не ломается.
+ */
+function resolveGroupKey(listing) {
+  if (listing.property_type === 'apartment' && listing.deal_type === 'rent' && TOPIC_GROUPS.apartment_rent) {
+    return 'apartment_rent';
+  }
+  return listing.property_type || 'apartment';
+}
+
+/**
+ * Отправляет объявление в тему нужного района внутри одной из
+ * супергрупп (Квартиры/Аренда квартир/Коммерция/Дома). Если группа для
+ * этого типа не настроена (нет в .env) — просто ничего не делает,
+ * молча. Если район неизвестен/тема ещё не создана (setup-topics.js не
+ * запускали для него) — уходит в общую тему группы.
  */
 export async function notifyToTopicGroup(listing) {
-  const groupKey = listing.property_type || 'apartment';
+  const groupKey = resolveGroupKey(listing);
   const targetChatId = TOPIC_GROUPS[groupKey];
   if (!bot || !targetChatId) return;
 

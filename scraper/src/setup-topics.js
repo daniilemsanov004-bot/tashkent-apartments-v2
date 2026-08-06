@@ -18,12 +18,14 @@ const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 
 const GROUPS = {
   apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
+  apartment_rent: (process.env.TELEGRAM_GROUP_APARTMENT_RENT || '').trim(),
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
   house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
 };
 
 const GROUP_LABELS = {
-  apartment: 'Квартиры',
+  apartment: 'Квартиры (продажа)',
+  apartment_rent: 'Квартиры (аренда)',
   commercial: 'Коммерция',
   house: 'Дома',
 };

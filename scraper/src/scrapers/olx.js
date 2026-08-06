@@ -158,6 +158,21 @@ export async function fetchOlxDetails(url) {
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
 
+  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления показывает адрес вида
+  // "Ташкент, Юнусабадский район" — структурное поле, надёжнее, чем
+  // угадывание района по тексту объявления (продавец может вообще не
+  // упомянуть район в описании, особенно если пишет только название ЖК).
+  // Точный CSS-класс этого блока не подтверждён вживую (нет сетевого
+  // доступа, чтобы открыть реальную страницу и проверить разметку) —
+  // поэтому ищем по тексту всей страницы, а не по конкретному селектору:
+  // это надёжнее к возможным отличиям вёрстки между объявлениями и к
+  // будущим изменениям дизайна OLX. Если вдруг перестанет находить —
+  // нужно свериться с реальной разметкой страницы (DevTools → Elements
+  // на блоке "МЕСТОПОЛОЖЕНИЕ") и уточнить регулярку/добавить селектор.
+  const bodyText = $('body').text().replace(/\s+/g, ' ');
+  const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
+  const locationDistrict = locationMatch ? locationMatch[1].trim() : null;
+
   // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
   // CSS-классу (он может меняться, а текст кнопки — вряд ли).
   let sellerListingsUrl = null;
@@ -183,7 +198,7 @@ export async function fetchOlxDetails(url) {
     sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl };
+  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict };
 }
 
 /**

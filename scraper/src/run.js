@@ -40,6 +40,11 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       if (details?.description) rawText = `${item.title}\n${details.description}`;
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
+      // Структурное поле "район" со страницы объявления (сейчас — блок
+      // "МЕСТОПОЛОЖЕНИЕ" на OLX, см. fetchOlxDetails). У Uybor
+      // raw_district уже выставлен на этапе списка (fetchUyborListings),
+      // так что тут его не перезаписываем.
+      if (details?.locationDistrict && !item.raw_district) item.raw_district = details.locationDistrict;
     } catch (err) {
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
     }

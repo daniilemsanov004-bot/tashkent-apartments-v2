@@ -34,6 +34,68 @@ function localized(value) {
   return String(value);
 }
 
+// Слова, которыми Uybor подписывает НЕ-частных продавцов прямо на
+// странице объявления (см. скриншот: под именем продавца написано
+// "Риелтор"). Замечено, что поле item.user?.organization в API часто
+// пустое даже для таких продавцов — сайт хранит это отдельным полем
+// "роль"/"тип аккаунта", точное имя которого в JSON не подтверждено,
+// поэтому проверяем сразу несколько вероятных вариантов + текстовое
+// совпадение по любому строковому полю пользователя.
+const AGENT_ROLE_WORDS = ['риелтор', 'риэлтор', 'агент', 'agent', 'realtor', 'dealer', 'compan', 'agency', 'brok'];
+
+function textLooksLikeAgent(value) {
+  const s = localized(value).toLowerCase();
+  return s ? AGENT_ROLE_WORDS.some((w) => s.includes(w)) : false;
+}
+
+/**
+ * Определяет, что продавец — НЕ частник (риелтор/агентство), а не
+ * только по item.user?.organization (которое, судя по скриншоту,
+ * не всегда заполнено). Проверяет несколько вероятных полей "роли"
+ * плюс текстовое совпадение по всем строковым полям user-объекта.
+ */
+function detectAgentRole(item) {
+  const user = item.user || {};
+
+  if (user.organization) {
+    return { isAgent: true, roleText: localized(user.organization.name) || localized(user.organization.title) || 'organization' };
+  }
+
+  // Вероятные названия поля "роль"/"тип аккаунта" — точное имя не
+  // подтверждено без реального ответа API, поэтому пробуем все.
+  const roleCandidates = [
+    user.role,
+    user.roleName,
+    user.userRole,
+    user.userType,
+    user.accountType,
+    user.type,
+    user.category,
+    user.position,
+    user.title,
+    user.badge,
+    user.label,
+    item.userRole,
+    item.role,
+  ];
+  for (const candidate of roleCandidates) {
+    if (candidate && textLooksLikeAgent(candidate)) {
+      return { isAgent: true, roleText: localized(candidate) };
+    }
+  }
+
+  // Последний рубеж: пробегаем по всем строковым значениям объекта
+  // user целиком — если Uybor называет поле как-то ещё, слово
+  // "риелтор"/"агент" всё равно должно где-то встретиться.
+  for (const value of Object.values(user)) {
+    if (typeof value === 'string' && textLooksLikeAgent(value)) {
+      return { isAgent: true, roleText: value };
+    }
+  }
+
+  return { isAgent: false, roleText: null };
+}
+
 // Сегодняшняя дата — фильтруем так же, как и OLX, чтобы не тащить
 // в базу старые объявления, поднятые платным продвижением.
 function isToday(dateStr) {
@@ -76,6 +138,9 @@ export async function fetchUyborListings(dealType = 'rent') {
     // окажутся пустыми/неверными, этот вывод покажет реальную структуру,
     // и поля будет легко поправить.
     console.log(`[uybor-${dealType}] пример сырого объявления:`, JSON.stringify(items[0]).slice(0, 1200));
+    // Отдельно логируем именно user — это где живёт роль
+    // ("Риелтор"/"Агент"), которую мы сейчас пытаемся поймать.
+    console.log(`[uybor-${dealType}] user первого объявления:`, JSON.stringify(items[0].user || null));
   }
 
   const listings = [];
@@ -98,14 +163,17 @@ export async function fetchUyborListings(dealType = 'rent') {
 
     const phone = item.user?.phone || item.phone || item.contactPhone || null;
 
-    // Uybor сам различает частных пользователей и организации — если
-    // у продавца заполнено поле organization, это гарантированно
-    // агентство/компания, а не частник. Надёжнее, чем гадать по тексту.
-    const sellerIsOrganization = !!item.user?.organization;
-    const sellerOrgName = sellerIsOrganization
-      ? localized(item.user.organization.name) || localized(item.user.organization.title) || null
-      : null;
-    const sellerName = sellerOrgName || item.user?.name || item.user?.fullName || null;
+    // Uybor различает частных продавцов и риелторов/агентства — но,
+    // как показал реальный прогон (см. скриншот с "Риелтор" под именем
+    // продавца), одного item.user?.organization для этого недостаточно.
+    // detectAgentRole() проверяет organization + несколько вероятных
+    // полей "роли" + текстовое совпадение по всем строковым полям user.
+    const { isAgent: sellerIsOrganization, roleText: sellerRoleText } = detectAgentRole(item);
+    const orgName = localized(item.user?.organization?.name) || localized(item.user?.organization?.title) || null;
+    const sellerName = orgName || item.user?.name || item.user?.fullName || null;
+    if (sellerIsOrganization) {
+      console.log(`[uybor-${dealType}] продавец "${sellerName || '?'}" помечен как риелтор/агентство (${sellerRoleText})`);
+    }
 
     // Uybor отдаёт район структурно (через ?embed=district) — самый
     // надёжный источник района из всех сайтов, используем напрямую,

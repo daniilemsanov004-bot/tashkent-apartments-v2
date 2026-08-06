@@ -150,9 +150,11 @@ function NotAuthorizedScreen({ email, onSignOut }) {
 
 // ---------- Панель команды ----------
 
-function TeamPanel({ authFetch, myEmail, onClose }) {
+function TeamPanel({ authFetch, myEmail: myEmailRaw, onClose }) {
+  const myEmail = (myEmailRaw || '').toLowerCase();
   const [members, setMembers] = useState([]);
   const [newEmail, setNewEmail] = useState('');
+  const [newRole, setNewRole] = useState('admin');
   const [status, setStatus] = useState('');
 
   const load = useCallback(async () => {
@@ -162,20 +164,60 @@ function TeamPanel({ authFetch, myEmail, onClose }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Я — владелец? Только владелец видит элементы управления
+  // (приглашение, смена роли, удаление); список видят все.
+  const myRole = members.find((m) => m.email === myEmail)?.role;
+  const iAmOwner = myRole === 'owner';
+  const ownerCount = members.filter((m) => m.role === 'owner').length;
+
   const invite = async (e) => {
     e.preventDefault();
     setStatus('Приглашаю…');
     const res = await authFetch('/api/team', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: newEmail.trim() }),
+      body: JSON.stringify({ email: newEmail.trim(), role: newRole }),
     });
     if (res?.ok) {
       setStatus('Готово ✓');
       setNewEmail('');
+      setNewRole('admin');
       load();
     } else {
       setStatus('Не получилось — проверьте email');
+    }
+  };
+
+  const changeRole = async (email, role) => {
+    setStatus('Меняю роль…');
+    const res = await authFetch('/api/team', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role }),
+    });
+    if (res?.ok) {
+      setStatus('Готово ✓');
+      load();
+    } else {
+      const body = await res?.json().catch(() => null);
+      setStatus(body?.error || 'Не получилось сменить роль');
+    }
+  };
+
+  const removeMember = async (email) => {
+    if (!window.confirm(`Убрать ${email} из команды?`)) return;
+    setStatus('Удаляю…');
+    const res = await authFetch('/api/team', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (res?.ok) {
+      setStatus('Готово ✓');
+      load();
+    } else {
+      const body = await res?.json().catch(() => null);
+      setStatus(body?.error || 'Не получилось удалить');
     }
   };
 
@@ -186,22 +228,64 @@ function TeamPanel({ authFetch, myEmail, onClose }) {
         <button className="btn" onClick={onClose}>Закрыть</button>
       </div>
       <ul className="team-list">
-        {members.map((m) => (
-          <li key={m.email}>
-            {m.email} {m.email === myEmail && <span className="you-tag">это вы</span>}
-          </li>
-        ))}
+        {members.map((m) => {
+          const isLastOwner = m.role === 'owner' && ownerCount <= 1;
+          return (
+            <li key={m.email} className="team-list-row">
+              <span>
+                {m.email} {m.email === myEmail && <span className="you-tag">это вы</span>}
+              </span>
+              <span className="team-list-row-right">
+                <span className={`role-badge role-badge-${m.role}`}>
+                  {m.role === 'owner' ? 'владелец' : 'админ'}
+                </span>
+                {iAmOwner && (
+                  <>
+                    {m.role === 'admin' ? (
+                      <button className="btn btn-small" onClick={() => changeRole(m.email, 'owner')}>
+                        Сделать владельцем
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-small"
+                        disabled={isLastOwner}
+                        title={isLastOwner ? 'Нельзя — это последний владелец' : undefined}
+                        onClick={() => changeRole(m.email, 'admin')}
+                      >
+                        Сделать админом
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-small btn-danger"
+                      disabled={isLastOwner}
+                      title={isLastOwner ? 'Нельзя — это последний владелец' : undefined}
+                      onClick={() => removeMember(m.email)}
+                    >
+                      Убрать
+                    </button>
+                  </>
+                )}
+              </span>
+            </li>
+          );
+        })}
       </ul>
-      <form onSubmit={invite} className="team-invite-form">
-        <input
-          type="email"
-          required
-          placeholder="email нового человека"
-          value={newEmail}
-          onChange={(e) => setNewEmail(e.target.value)}
-        />
-        <button className="btn btn-primary" type="submit">Пригласить</button>
-      </form>
+      {iAmOwner && (
+        <form onSubmit={invite} className="team-invite-form">
+          <input
+            type="email"
+            required
+            placeholder="email нового человека"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+          />
+          <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+            <option value="admin">Админ</option>
+            <option value="owner">Владелец</option>
+          </select>
+          <button className="btn btn-primary" type="submit">Пригласить</button>
+        </form>
+      )}
       {status && <p className="auth-hint">{status}</p>}
     </div>
   );

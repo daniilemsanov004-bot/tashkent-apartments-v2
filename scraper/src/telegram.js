@@ -40,6 +40,35 @@ export async function checkTelegramConnection() {
   }
 }
 
+// Хештеги в тексте сообщения — не отдельная функция бота, а просто
+// слова вида #Чиланзар в самом сообщении. Telegram делает такие слова
+// кликабельными и учитывает их во встроенном поиске по чату (можно
+// набрать "#Чиланзар" в поиске чата и увидеть только эти объявления).
+// Хештег не может содержать пробелы/дефисы/цифры-в-начале — чистим.
+function toHashtag(word) {
+  if (!word) return null;
+  const cleaned = String(word)
+    .replace(/['".,()]/g, '')
+    .replace(/[\s\-]+/g, '');
+  if (!cleaned) return null;
+  return `#${cleaned}`;
+}
+
+function buildHashtags(listing) {
+  const tags = [];
+  const dealTag = listing.deal_type === 'sale' ? 'продажа' : listing.deal_type === 'rent' ? 'аренда' : null;
+  if (dealTag) tags.push(toHashtag(dealTag));
+
+  const typeTag =
+    listing.property_type === 'house' ? 'дом' : listing.property_type === 'commercial' ? 'коммерция' : 'квартира';
+  tags.push(toHashtag(typeTag));
+
+  if (listing.district) tags.push(toHashtag(listing.district));
+  if (listing.rooms) tags.push(toHashtag(`${listing.rooms}комн`));
+
+  return tags.filter(Boolean).join(' ');
+}
+
 export async function notifyNewListing(listing) {
   if (!bot || !chatId) {
     console.warn('Telegram не настроен — пропускаю уведомление');

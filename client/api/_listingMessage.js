@@ -11,7 +11,14 @@
 // меняете формат сообщения в одном месте, проверьте и второе.
 
 function badgeText(listing) {
+<<<<<<< HEAD
   if (listing.flagged_agent) return `🏢 Отмечено агентом как агентство (${listing.flagged_by || '—'})`;
+=======
+<<<<<<< HEAD
+  if (listing.flagged_agent) return `🏢 Отмечено агентом как агентство (${listing.flagged_by || '—'})`;
+=======
+>>>>>>> a8eaa5b875f521546dcdd801445f7f0dbe1ecab0
+>>>>>>> c3d5b1b17412468f9dc532a05cde391e5de28449
   if (listing.label_kind === 'owner') return '✅ Собственник';
   if (listing.label_kind === 'unchecked') return `🙂 ${listing.label_text || 'Собственник'}`;
   if (listing.label_kind === 'agent') return `🏢 ${listing.label_text || 'Похоже на агентство'}`;
@@ -30,7 +37,14 @@ export function buildListingText(listing) {
   let statusBlock = '';
   if (listing.assigned_to) statusBlock += `\n👤 Взял в работу: ${listing.assigned_to}`;
   if (listing.contacted) statusBlock += `\n✅ Связался: ${listing.contacted_by || '—'}`;
+<<<<<<< HEAD
   if (listing.notes) statusBlock += `\n📝 Заметка: ${listing.notes}`;
+=======
+<<<<<<< HEAD
+  if (listing.notes) statusBlock += `\n📝 Заметка: ${listing.notes}`;
+=======
+>>>>>>> a8eaa5b875f521546dcdd801445f7f0dbe1ecab0
+>>>>>>> c3d5b1b17412468f9dc532a05cde391e5de28449
 
   return (
     `🏠 Новое объявление (${listing.source})\n` +
@@ -62,9 +76,18 @@ export function buildListingButtons(listing) {
     { text: listing.contacted ? '↩️ Снять «Связался»' : '✅ Связался', callback_data: `ct:${listing.id}` },
     { text: listing.assigned_to ? '↩️ Освободить' : '👤 Беру в работу', callback_data: `as:${listing.id}` },
   ]);
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+>>>>>>> c3d5b1b17412468f9dc532a05cde391e5de28449
   buttons.push([
     { text: listing.flagged_agent ? '↩️ Вернуть как собственника' : '🚫 Это агент', callback_data: `fl:${listing.id}` },
     { text: '📝 Заметка', callback_data: `nt:${listing.id}` },
   ]);
+<<<<<<< HEAD
+=======
+=======
+>>>>>>> a8eaa5b875f521546dcdd801445f7f0dbe1ecab0
+>>>>>>> c3d5b1b17412468f9dc532a05cde391e5de28449
   return buttons;
 }

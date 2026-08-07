@@ -50,9 +50,12 @@ export function buildListingButtons(listing) {
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
-    // См. пояснение в scraper/src/telegram.js — кнопка "Позвонить"
-    // (tel:) ломала отправку ВСЕГО сообщения, убрана.
-    buttons.push([{ text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` }]);
+    const national = digits.startsWith('998') ? digits.slice(3) : digits;
+    const cleanPhone = `+998${national}`;
+    buttons.push([
+      { text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` },
+      { text: '📞 Позвонить', url: `tel:${cleanPhone}` },
+    ]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
   buttons.push([

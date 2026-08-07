@@ -106,13 +106,12 @@ function buildMessagePayload(listing) {
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
-    // ⚠️ Кнопка "Позвонить" (tel:) раньше была тут, но Telegram
-    // официально не поддерживает схему tel: в url кнопок и из-за неё
-    // ОТКЛОНЯЕТ ВСЁ СООБЩЕНИЕ целиком ("Wrong port number specified
-    // in the URL") — то есть объявление вообще не доходило до
-    // группы, если был найден телефон. Убрал кнопку — номер и так
-    // виден в тексте сообщения и сам по себе кликабелен в Telegram.
-    buttons.push([{ text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` }]);
+    const national = digits.startsWith('998') ? digits.slice(3) : digits;
+    const cleanPhone = `+998${national}`;
+    buttons.push([
+      { text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` },
+      { text: '📞 Позвонить', url: `tel:${cleanPhone}` },
+    ]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
   // Кнопки статуса — при первой отправке объявление всегда ещё не

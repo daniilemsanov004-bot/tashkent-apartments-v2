@@ -238,6 +238,7 @@ export async function fetchOlxDetails(url) {
       phone = await fetchOlxPhone(adId);
     }
     if (!phone) {
+<<<<<<< HEAD
       const phoneContext = [...html.matchAll(/.{0,30}phone.{0,60}/gi)].slice(0, 3).map((m) => m[0].replace(/\s+/g, ' '));
       const hasNextData = html.includes('__NEXT_DATA__');
       const hasPreloadedState = /__PRELOADED_STATE__|__INITIAL_STATE__/.test(html);
@@ -246,6 +247,9 @@ export async function fetchOlxDetails(url) {
           `слово "phone" в HTML: ${phoneContext.length ? phoneContext.join(' || ') : 'НЕ встречается вообще'}; ` +
           `__NEXT_DATA__ есть: ${hasNextData}; __PRELOADED_STATE__/__INITIAL_STATE__ есть: ${hasPreloadedState}`
       );
+=======
+      console.log(`[olx-details] телефон не найден для ${url} (adId=${adId || 'не определён'}); фрагмент JSON: ${html.slice(0, 300).replace(/\s+/g, ' ')}`);
+>>>>>>> 613e8b4f1d02fdb18fae37664e3b9b1751c1491e
     }
   }
 

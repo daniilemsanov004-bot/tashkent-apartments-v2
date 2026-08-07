@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
+import { parsePrice } from '../priceParser.js';
 
 // Два раздела — аренда и продажа квартир по Ташкенту. Забираем ВСЕ
 // объявления в каждом, не только помеченные сайтом "от собственника"
@@ -28,7 +29,39 @@ export const OLX_CATEGORIES = {
 export const OLX_URLS = OLX_CATEGORIES.apartment;
 
 const LISTING_LINK_RE = /\/d\/obyavlenie\/[^"'\s]*-ID([a-zA-Z0-9]+)\.html/;
-const PRICE_RE = /[\d\s]{3,}\s*(?:сум|у\.?\s?е\.?)/i;
+// Раньше было [\d\s]{3,} — "любой набор цифр и пробелов от 3 символов"
+// перед "сум"/"у.е.". Проблема: это могло случайно склеить цену с
+// соседним числом без разделителя-не-цифры (например, "3/9 4 596 985
+// сум" — этаж "3/9" отделён слэшем, но следующая цифра "9" после
+// пробела уже воспринималась как начало цены, и вместо "4 596 985"
+// получалось "9 4 596 985" → лишняя цифра спереди, цена в 10 раз
+// больше реальной). Теперь требуем ПРАВИЛЬНОЕ разбиение по разрядам
+// (группы ровно по 3 цифры через пробел, как OLX и форматирует суммы:
+// "4 596 985") — так число "9 4 596 985" не пройдёт как одна цена,
+// потому что "9 4" — не валидная группа разрядов.
+const PRICE_RE = /\d{1,3}(?:[\s\u00A0]\d{3})*\s*(?:сум|у\.?\s?е\.?)/i;
+
+// Второй уровень защиты от кривой цены (после ужесточения самого
+// PRICE_RE выше) — грубая проверка "разумных границ" рынка Ташкента.
+// Если распарсенное число вообще не лезет ни в какие ворота для этого
+// типа сделки — лучше не показывать цену, чем показать в 10 раз
+// завышенную/заниженную из-за случайно захваченной соседней цифры.
+// Границы намеренно широкие (с запасом), чтобы не резать реальные
+// дорогие/дешёвые варианты — это просто "не бывает такого" фильтр.
+const PLAUSIBLE_RANGES = {
+  rent: { UZS: [200000, 150000000], USD: [20, 15000] },
+  sale: { UZS: [30000000, 200000000000], USD: [2000, 15000000] },
+};
+
+function isPlausiblePrice(rawPrice, dealType) {
+  if (!rawPrice) return true; // пустую цену не трогаем — это отдельный случай
+  const { value, currency } = parsePrice(rawPrice);
+  if (value === null || !currency) return true; // не смогли распарсить — не блокируем
+  const ranges = PLAUSIBLE_RANGES[dealType] || PLAUSIBLE_RANGES.rent;
+  const range = ranges[currency];
+  if (!range) return true;
+  return value >= range[0] && value <= range[1];
+}
 
 // OLX подписывает карточки датой публикации: "Сегодня в 14:23", "Вчера в 09:10"
 // или конкретной датой ("30 июля"). Нас интересуют ТОЛЬКО сегодняшние —
@@ -105,7 +138,13 @@ export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartm
       const text = container.text();
       if (!price) {
         const priceMatch = text.match(PRICE_RE);
-        if (priceMatch) price = priceMatch[0].trim();
+        if (priceMatch && isPlausiblePrice(priceMatch[0], dealType)) {
+          price = priceMatch[0].trim();
+        }
+        // если цена нашлась, но выглядит неправдоподобно — НЕ берём её и
+        // НЕ помечаем price как найденную, идём выше по DOM ещё на
+        // уровень в надежде найти корректную; если так и не найдём —
+        // просто останется пустой (см. posted_raw ниже, аналогично)
       }
       if (!dateRaw) {
         const dateMatch = text.match(DATE_META_RE);

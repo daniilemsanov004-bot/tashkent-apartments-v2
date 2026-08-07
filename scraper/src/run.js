@@ -194,7 +194,15 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     delete listing.phone_from_details; // тоже служебное — уже перенесено в phone
     delete listing.raw_district; // тоже служебное — уже перенесено в district/district_raw
 
-    await saveListing(listing);
+    const saved = await saveListing(listing);
+    if (!saved) {
+      // Не сохранилось в базу — не шлём уведомление вообще (иначе
+      // получим дубль на следующем прогоне, см. комментарий в db.js).
+      // Просто пропускаем — при следующем запуске isKnown() снова
+      // увидит его как "новое" и попробует сохранить+отправить с нуля.
+      console.error(`[${sourceLabel}] пропускаю уведомление — не удалось сохранить в базу: ${listing.title}`);
+      continue;
+    }
 
     // Агентства (isConfirmedAgent) снова НЕ отправляем в Telegram —
     // вернули как было раньше (пробовали показывать всех, но по

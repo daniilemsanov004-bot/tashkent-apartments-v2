@@ -3,6 +3,7 @@ import fs from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
 import { notifyToTopicGroup } from './telegram.js';
+import { markNotified } from './db.js';
 
 // Разовый скрипт: старые объявления уже лежат в Supabase (их когда-то
 // отправили только в общий чат без тем), тут они рассылаются ЗАНОВО —
@@ -81,6 +82,7 @@ async function fetchBacklog(from, to) {
       .gte('created_at', from)
       .lt('created_at', to)
       .neq('label_kind', 'agent') // агентства не рассылаем — так же, как в обычном run.js
+      .neq('notified', true) // уже отправленные обычным run.js — не дублируем повторно
       .order('created_at', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) throw new Error(`Supabase: ${error.message}`);
@@ -115,6 +117,7 @@ async function main() {
   for (const listing of remaining) {
     try {
       await notifyToTopicGroup(listing);
+      await markNotified(listing.id); // синхронизируем с базой, не только с локальным progress.json
       done.add(listing.id);
       sent++;
       if (sent % 20 === 0) saveProgress(done); // не пишем файл на каждое сообщение — раз в 20

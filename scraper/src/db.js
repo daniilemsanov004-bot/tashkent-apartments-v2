@@ -23,13 +23,26 @@ export async function isKnown(id) {
   return !!data;
 }
 
+/**
+ * @returns {Promise<boolean>} true, если запись реально сохранилась.
+ * ВАЖНО: раньше эта функция ничего не возвращала, а ошибку просто
+ * логировала — вызывающий код (run.js) не знал, что сохранение не
+ * удалось, и всё равно слал уведомление в Telegram и пытался
+ * отметить notified=true. Если строки в базе на самом деле не было,
+ * markNotified молча обновлял 0 строк (без ошибки), и на следующем
+ * прогоне isKnown() снова возвращал false — объявление уходило в
+ * Telegram ПОВТОРНО. Теперь вызывающий код обязан проверять результат
+ * и не слать уведомление, если сохранение не удалось.
+ */
 export async function saveListing(listing) {
   const { error } = await supabase
     .from('listings')
     .upsert({ ...listing, contacted: false }, { onConflict: 'id', ignoreDuplicates: true });
   if (error) {
     console.error('Supabase (saveListing) ошибка:', error.message);
+    return false;
   }
+  return true;
 }
 
 export async function markNotified(id) {

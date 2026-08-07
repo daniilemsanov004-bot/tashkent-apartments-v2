@@ -114,6 +114,22 @@ function buildMessagePayload(listing) {
     ]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
+  // Кнопки статуса — при первой отправке объявление всегда ещё не
+  // взято в работу и не отмечено "связался" (только что появилось),
+  // поэтому кнопки в начальном виде. Дальше, при нажатии, webhook
+  // (client/api/telegram-webhook.js) сам пересобирает и текст, и
+  // кнопки сообщения под актуальный статус — см. buildListingButtons
+  // в client/api/_listingMessage.js (та же логика формата кнопок,
+  // продублирована по той же причине, что и в других местах между
+  // scraper/ и client/api/: два разных deployable-проекта).
+  buttons.push([
+    { text: '✅ Связался', callback_data: `ct:${listing.id}` },
+    { text: '👤 Беру в работу', callback_data: `as:${listing.id}` },
+  ]);
+  buttons.push([
+    { text: '🚫 Это агент', callback_data: `fl:${listing.id}` },
+    { text: '📝 Заметка', callback_data: `nt:${listing.id}` },
+  ]);
 
   return { message, buttons };
 }

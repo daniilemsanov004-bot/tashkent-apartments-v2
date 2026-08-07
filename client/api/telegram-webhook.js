@@ -31,6 +31,7 @@ import { supabase } from './_supabase.js';
 import { sendMessage, editMessageText, answerCallbackQuery, escapeHtml } from './_telegramApi.js';
 import { DISTRICTS, districtSlug, districtFromSlug } from './_districts.js';
 import { parsePriceRange } from './_priceParser.js';
+import { buildListingText, buildListingButtons } from './_listingMessage.js';
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 11990;
@@ -55,7 +56,69 @@ async function saveSession(chatId, userId, state) {
     .upsert({ chat_id: chatId, user_id: userId, state, updated_at: new Date().toISOString() });
 }
 
-// ---------- keyboards ----------
+function displayName(from) {
+  if (!from) return 'Агент';
+  if (from.username) return `@${from.username}`;
+  return [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Агент';
+}
+
+// ---------- кнопки "Связался" / "Беру в работу" на карточках объявлений ----------
+// Не часть мастера поиска (bot_sessions) — работают на самих
+// сообщениях-объявлениях в супергруппах, независимо от сессии.
+
+async function refreshListingMessage(chatId, messageId, listingId) {
+  const { data: listing, error } = await supabase.from('listings').select('*').eq('id', listingId).maybeSingle();
+  if (error || !listing) {
+    console.error('Не удалось перечитать объявление для обновления карточки:', error?.message || 'не найдено');
+    return null;
+  }
+  // editMessageText по умолчанию просит Telegram парсить текст как
+  // HTML — а в тексте карточки есть "сырая" ссылка на объявление, в
+  // которой почти всегда есть символ "&" (разделитель параметров
+  // URL). Для HTML это служебный символ, из-за него Telegram
+  // отказывается парсить текст и правка тихо не применяется. Текст
+  // карточки и так без HTML-разметки (как и при первой отправке из
+  // scraper/telegram.js), поэтому здесь явно отключаем HTML-режим.
+  await editMessageText(chatId, messageId, buildListingText(listing), {
+    parse_mode: undefined,
+    reply_markup: { inline_keyboard: buildListingButtons(listing) },
+  });
+  return listing;
+}
+
+async function toggleContacted(chatId, messageId, listingId, agentName, callbackId) {
+  const { data: current } = await supabase.from('listings').select('contacted').eq('id', listingId).maybeSingle();
+  const next = !current?.contacted;
+  await supabase
+    .from('listings')
+    .update({
+      contacted: next,
+      contacted_by: next ? agentName : null,
+      contacted_at: next ? new Date().toISOString() : null,
+    })
+    .eq('id', listingId);
+  await refreshListingMessage(chatId, messageId, listingId);
+  await answerCallbackQuery(callbackId, next ? '✅ Отмечено' : 'Отметка снята');
+}
+
+async function toggleAssigned(chatId, messageId, listingId, agentName, callbackId) {
+  const { data: current } = await supabase.from('listings').select('assigned_to').eq('id', listingId).maybeSingle();
+  if (current?.assigned_to && current.assigned_to !== agentName) {
+    // Уже кто-то другой взял в работу — не перехватываем молча, а
+    // показываем всплывающее уведомление, чтобы не звонили вдвоём.
+    await answerCallbackQuery(callbackId, `Уже взял в работу: ${current.assigned_to}`);
+    return;
+  }
+  const next = current?.assigned_to ? null : agentName; // повторное нажатие тем же агентом — освобождает
+  await supabase
+    .from('listings')
+    .update({ assigned_to: next, assigned_at: next ? new Date().toISOString() : null })
+    .eq('id', listingId);
+  await refreshListingMessage(chatId, messageId, listingId);
+  await answerCallbackQuery(callbackId, next ? '👤 Взято в работу' : 'Освобождено');
+}
+
+
 
 function dealTypeKeyboard() {
   return [[{ text: '🔑 Аренда', callback_data: 'dt:rent' }, { text: '🏷️ Продажа', callback_data: 'dt:sale' }]];
@@ -107,6 +170,46 @@ function resultsKeyboard(hasMore) {
   return [row];
 }
 
+async function toggleFlaggedAgent(chatId, messageId, listingId, agentName, callbackId) {
+  const { data: current } = await supabase.from('listings').select('flagged_agent').eq('id', listingId).maybeSingle();
+  const next = !current?.flagged_agent;
+  await supabase
+    .from('listings')
+    .update({ flagged_agent: next, flagged_by: next ? agentName : null, flagged_at: next ? new Date().toISOString() : null })
+    .eq('id', listingId);
+  await refreshListingMessage(chatId, messageId, listingId);
+  await answerCallbackQuery(callbackId, next ? '🚫 Отмечено как агентство' : 'Пометка снята');
+}
+
+// Заметки не пишутся мастером/кнопками (Telegram не даёт открыть
+// текстовое поле по кнопке) — вместо этого просим агента ОТВЕТИТЬ
+// (Reply) на специальное сообщение-приглашение, которое бот отправляет
+// сам. Так надёжнее, чем "просто следующее сообщение в чате" — в
+// групповом чате между нажатием кнопки и ответом агента может
+// проскочить сообщение от кого-то другого.
+async function promptForNote(chatId, cardMessageId, listingId, userId) {
+  const res = await sendMessage(chatId, '✏️ Напишите заметку ОТВЕТОМ (Reply) на это сообщение.', {
+    reply_to_message_id: cardMessageId,
+  });
+  const promptMessageId = res?.result?.message_id;
+  if (!promptMessageId) return;
+  await saveSession(chatId, userId, { mode: 'awaiting_note', listingId, cardMessageId, promptMessageId });
+}
+
+async function tryHandleNoteReply(message) {
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+  const session = await getSession(chatId, userId);
+  if (session?.mode !== 'awaiting_note') return false;
+  if (!message.text || message.reply_to_message?.message_id !== session.promptMessageId) return false;
+
+  await supabase.from('listings').update({ notes: message.text.slice(0, 500) }).eq('id', session.listingId);
+  await refreshListingMessage(chatId, session.cardMessageId, session.listingId);
+  await saveSession(chatId, userId, {});
+  await sendMessage(chatId, '📝 Заметка сохранена.');
+  return true;
+}
+
 // ---------- text helpers ----------
 
 const DEAL_LABEL = { rent: '🔑 Аренда', sale: '🏷️ Продажа' };
@@ -143,7 +246,7 @@ function listingLine(l) {
   return (
     `${badge} <b>${roomsPart}${escapeHtml(l.title)}${areaPart}</b>\n` +
     `💰 ${escapeHtml(l.price || 'цена не указана')}${districtPart}\n` +
-    `${l.url}`
+    `${escapeHtml(l.url)}`
   );
 }
 
@@ -263,6 +366,27 @@ async function handleCallback(update) {
   const userId = cb.from.id;
   const messageId = cb.message.message_id;
 
+  // Кнопки на карточках объявлений ("Связался"/"Беру в работу") — не
+  // часть мастера поиска, обрабатываем сразу и выходим, до всей
+  // остальной логики сессий ниже.
+  if (data.startsWith('ct:')) {
+    await toggleContacted(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
+    return;
+  }
+  if (data.startsWith('as:')) {
+    await toggleAssigned(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
+    return;
+  }
+  if (data.startsWith('fl:')) {
+    await toggleFlaggedAgent(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
+    return;
+  }
+  if (data.startsWith('nt:')) {
+    await promptForNote(chatId, messageId, data.slice(3), userId);
+    await answerCallbackQuery(cb.id);
+    return;
+  }
+
   await answerCallbackQuery(cb.id);
 
   if (data === 'new') {
@@ -360,6 +484,15 @@ async function handlePriceTextReply(message) {
   return true;
 }
 
+// Мастер поиска /find отключён (07.08.2026) — теперь объявления сами
+// разлетаются по тематическим супергруппам/темам (см.
+// notifyToTopicGroup в scraper/src/telegram.js), поэтому отдельный
+// поиск через бота стал не нужен. Код мастера (startWizard и всё,
+// что использует bot_sessions) НЕ удалён — оставлен на случай, если
+// понадобится вернуть или переделать под другую команду (например
+// "мои объявления"). Чтобы включить обратно — верните в true.
+const FIND_WIZARD_ENABLED = false;
+
 function commandName(message) {
   const entity = (message.entities || []).find((e) => e.type === 'bot_command' && e.offset === 0);
   if (!entity) return null;
@@ -367,8 +500,17 @@ function commandName(message) {
 }
 
 async function handleMessage(message) {
+  if (await tryHandleNoteReply(message)) return;
+
   const cmd = commandName(message);
   if (cmd === '/start' || cmd === '/find') {
+    if (!FIND_WIZARD_ENABLED) {
+      await sendMessage(
+        message.chat.id,
+        'Поиск через бота сейчас не нужен — объявления сами приходят в свою тему группы по типу и району.'
+      );
+      return;
+    }
     await startWizard(message.chat.id, message.from.id, null);
     return;
   }

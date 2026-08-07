@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   // ощущениям агентских объявлений становится слишком много и они
   // мешают — вернули как было. ?showAgents=true — для отладки.
   if (req.query.showAgents !== 'true') {
-    query = query.neq('label_kind', 'agent');
+    query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
   }
 
   const { data, error } = await query;

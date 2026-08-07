@@ -158,7 +158,6 @@ export async function fetchOlxDetails(url) {
   });
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
-  const bodyText = $('body').text().replace(/\s+/g, ' ');
 
   // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления рендерится из
   // встроенного JSON с данными страницы. Вы прислали реальный кусок
@@ -179,40 +178,10 @@ export async function fetchOlxDetails(url) {
   // (например, OLX поменял формат сериализации): ищем блок
   // "МЕСТОПОЛОЖЕНИЕ" по обычному тексту страницы, как раньше.
   if (!locationDistrict) {
+    const bodyText = $('body').text().replace(/\s+/g, ' ');
     const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
     locationDistrict = locationMatch ? normalizeDistrict(locationMatch[1].trim()) : null;
   }
-
-  // Тип аккаунта продавца — оказывается, OLX сам прямым текстом
-  // подписывает это на странице объявления, прямо перед списком
-  // параметров ("Тип жилья:", "Тип строения:" и т.п.): "Частное лицо"
-  // у обычных пользователей и "Бизнес" у зарегистрированных бизнес-
-  // аккаунтов. Подтверждено вживую (07.08.2026) на двух реальных
-  // объявлениях OLX: у частника — "Частное лицо", у агентства
-  // "Alpha Realty" (у которой оказалось 471 объявление недвижимости) —
-  // "Бизнес". Это НАМНОГО надёжнее подсчёта чужих объявлений через
-  // fetchOlxSellerListingsCount ниже — там из-за неполного списка
-  // ключевых слов в REAL_ESTATE_SLUG_RE регулярно недосчитывались
-  // объявления вида "2-комнатная ...", "3 xonali ..." (без слова
-  // "квартира" в самой ссылке) — именно из-за этого агентства с
-  // сотнями объявлений проходили тест "> N объявлений" с заниженным
-  // счётом. Здесь же сайт САМ прямо говорит "Бизнес" — считать
-  // вообще ничего не нужно.
-  //
-  // У бизнес-аккаунтов ещё и "Все объявления автора" обычно ведёт не
-  // на обычный /list/user/..., а на отдельный фирменный поддомен вида
-  // https://<имя-магазина>.olx.uz/home/ — OLX даёт бизнес-аккаунтам
-  // отдельные страницы-витрины. Так что подсчёт по sellerListingsUrl
-  // для таких аккаунтов не только неточен из-за REAL_ESTATE_SLUG_RE,
-  // но и вообще не нужен — isBusinessAccount ниже решает вопрос сразу.
-  //
-  // Требуем, чтобы сразу за "Бизнес"/"Частное лицо" шло начало
-  // первого параметра (слово с заглавной буквы + двоеточие) — иначе
-  // возможно ложное совпадение с пунктом меню "Бизнес и услуги" в
-  // подвале страницы (там после него не двоеточие, а следующий пункт
-  // меню, так что этот шаблон туда не попадёт).
-  const accountTypeMatch = bodyText.match(/(Бизнес|Частное лицо)\s+[А-ЯЁ][а-яёА-ЯЁ\s]{2,40}:/);
-  const isBusinessAccount = accountTypeMatch ? accountTypeMatch[1] === 'Бизнес' : false;
 
   // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
   // CSS-классу (он может меняться, а текст кнопки — вряд ли).
@@ -273,7 +242,7 @@ export async function fetchOlxDetails(url) {
     }
   }
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict, phone, isBusinessAccount };
+  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict, phone };
 }
 
 /**
@@ -282,21 +251,9 @@ export async function fetchOlxDetails(url) {
  * .../prodaetsya-3-komnatnaya-kvartira-na-6-etazhe-ID4pYww.html — поэтому
  * можно довольно надёжно отличить "квартира/дом/участок/офис" от
  * "iphone", "toyota" и т.д. прямо по самой ссылке, не открывая её.
- *
- * ВАЖНО (07.08.2026): изначальный список ловил только явные слова
- * типа "kvartira"/"dom" — но вживую выяснилось, что огромная доля
- * реальных объявлений называется по формату "2-komnatnaya ...",
- * "3 xonali ...", "novostroyka ..." БЕЗ слова "квартира" в самой
- * ссылке. Проверено на реальном профиле агентства с 471 объявлением
- * недвижимости — старым списком ключевых слов ловилась лишь малая
- * часть из них, из-за чего fetchOlxSellerListingsCount сильно
- * занижал счётчик и агентства с сотнями объявлений проходили порог
- * SELLER_LISTINGS_AGENT_THRESHOLD как обычные частники. Добавлены
- * количество комнат ("N-komnatn..."), узбекское "xona/xonali"
- * (комната) и "novostroyka"/"studiya".
  */
 const REAL_ESTATE_SLUG_RE =
-  /kvartir|kottedj|dom[ao]?[^a-z]|nedvizh|kommerch|ofis|sklad|magazin|pomeshen|uchastok|taunhaus|zemel|\d+-?komnatn|xonali|xona[^a-z]|novostroyk|studiy/i;
+  /kvartir|kottedj|dom[ao]?[^a-z]|nedvizh|kommerch|ofis|sklad|magazin|pomeshen|uchastok|taunhaus|zemel/i;
 
 /**
  * Считает, сколько объявлений НЕДВИЖИМОСТИ у продавца на его странице

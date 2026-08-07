@@ -7,7 +7,6 @@ import { notifyAlert, notifyToTopicGroup } from './telegram.js';
 import { isKnown, saveListing, markNotified } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
-import { correctPropertyType } from './propertyType.js';
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 
@@ -55,46 +54,13 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
       // тексте, потому что это самое надёжное поле, когда доступно.
       if (details?.phone) item.phone_from_details = details.phone;
-      // Бизнес-аккаунт по прямой метке OLX ("Бизнес" на странице
-      // объявления, см. fetchOlxDetails) — приравниваем к
-      // seller_is_organization, чтобы сработала уже существующая
-      // проверка чуть ниже (та же, что и для организаций Uybor).
-      // Это самый надёжный сигнал агентства для OLX — надёжнее, чем
-      // подсчёт объявлений продавца (см. fetchOlxSellerListingsCount).
-      if (details?.isBusinessAccount) item.seller_is_organization = true;
       // Структурное поле "район" со страницы объявления (сейчас — блок
       // "МЕСТОПОЛОЖЕНИЕ" на OLX, см. fetchOlxDetails). У Uybor
       // raw_district уже выставлен на этапе списка (fetchUyborListings),
       // так что тут его не перезаписываем.
-      //
-      // ВАЖНО: на OLX блок "МЕСТОПОЛОЖЕНИЕ" продавец выставляет через
-      // отдельный выпадающий список на форме — и он не всегда совпадает
-      // с районом, который продавец написал прямо в тексте объявления
-      // (текст обычно правильнее: его печатают вручную специально под
-      // это объявление, а "местоположение" иногда остаётся от прошлого
-      // объявления/дефолтное). Поэтому берём "МЕСТОПОЛОЖЕНИЕ" только
-      // как запасной вариант — если в заголовке+описании район вообще
-      // не упомянут явно.
-      if (details?.locationDistrict && !item.raw_district) {
-        const districtFromText = normalizeDistrict(rawText);
-        if (!districtFromText) {
-          item.raw_district = details.locationDistrict;
-        }
-      }
+      if (details?.locationDistrict && !item.raw_district) item.raw_district = details.locationDistrict;
     } catch (err) {
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
-    }
-
-    // Подстраховка от объявлений не в своей категории на сайте (см.
-    // propertyType.js) — актуально для OLX и Realting, у которых
-    // категория (apartment/house/commercial) определяется по URL
-    // раздела поиска, а не по содержимому объявления. У Uybor пока
-    // только один раздел (квартиры), угадывать там нечего.
-    if (item.source !== 'uybor') {
-      item.property_type = correctPropertyType(item.property_type, rawText, {
-        sourceLabel,
-        url: item.url,
-      });
     }
 
     const phoneMatch = rawText.match(PHONE_REGEX);
@@ -200,12 +166,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       normalizeDistrict(item.raw_district) ||
       normalizeDistrict(classification.district) ||
       normalizeDistrict(rawText);
-    // district_raw — «сырое» значение источника района, для отображения.
-    // Если район нашёлся не через структурное поле (raw_district) и не
-    // через ИИ-классификацию, а через сам текст объявления (см. фоллбэк
-    // выше и правку для OLX), используем уже нормализованное название —
-    // иначе district_raw был бы пустым, хотя district уже определён.
-    const districtRaw = item.raw_district || classification.district || district || null;
+    const districtRaw = item.raw_district || classification.district || null;
 
     // Числовая цена + валюта — нужны, чтобы бот мог фильтровать по
     // диапазону цены (price остаётся текстом для отображения как есть).

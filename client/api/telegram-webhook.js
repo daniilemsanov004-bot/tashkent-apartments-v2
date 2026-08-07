@@ -72,7 +72,15 @@ async function refreshListingMessage(chatId, messageId, listingId) {
     console.error('Не удалось перечитать объявление для обновления карточки:', error?.message || 'не найдено');
     return null;
   }
+  // editMessageText по умолчанию просит Telegram парсить текст как
+  // HTML — а в тексте карточки есть "сырая" ссылка на объявление, в
+  // которой почти всегда есть символ "&" (разделитель параметров
+  // URL). Для HTML это служебный символ, из-за него Telegram
+  // отказывается парсить текст и правка тихо не применяется. Текст
+  // карточки и так без HTML-разметки (как и при первой отправке из
+  // scraper/telegram.js), поэтому здесь явно отключаем HTML-режим.
   await editMessageText(chatId, messageId, buildListingText(listing), {
+    parse_mode: undefined,
     reply_markup: { inline_keyboard: buildListingButtons(listing) },
   });
   return listing;
@@ -198,7 +206,7 @@ function listingLine(l) {
   return (
     `${badge} <b>${roomsPart}${escapeHtml(l.title)}${areaPart}</b>\n` +
     `💰 ${escapeHtml(l.price || 'цена не указана')}${districtPart}\n` +
-    `${l.url}`
+    `${escapeHtml(l.url)}`
   );
 }
 
@@ -427,6 +435,15 @@ async function handlePriceTextReply(message) {
   return true;
 }
 
+// Мастер поиска /find отключён (07.08.2026) — теперь объявления сами
+// разлетаются по тематическим супергруппам/темам (см.
+// notifyToTopicGroup в scraper/src/telegram.js), поэтому отдельный
+// поиск через бота стал не нужен. Код мастера (startWizard и всё,
+// что использует bot_sessions) НЕ удалён — оставлен на случай, если
+// понадобится вернуть или переделать под другую команду (например
+// "мои объявления"). Чтобы включить обратно — верните в true.
+const FIND_WIZARD_ENABLED = false;
+
 function commandName(message) {
   const entity = (message.entities || []).find((e) => e.type === 'bot_command' && e.offset === 0);
   if (!entity) return null;
@@ -436,6 +453,13 @@ function commandName(message) {
 async function handleMessage(message) {
   const cmd = commandName(message);
   if (cmd === '/start' || cmd === '/find') {
+    if (!FIND_WIZARD_ENABLED) {
+      await sendMessage(
+        message.chat.id,
+        'Поиск через бота сейчас не нужен — объявления сами приходят в свою тему группы по типу и району.'
+      );
+      return;
+    }
     await startWizard(message.chat.id, message.from.id, null);
     return;
   }

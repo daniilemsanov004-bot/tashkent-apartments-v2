@@ -116,4 +116,4 @@ export function labelFor(classification) {
  * если сам текст звучит по-человечески. Работает независимо от того,
  * включена ли ИИ-классификация — не требует API-ключа и денег.
  */
-export const SELLER_LISTINGS_AGENT_THRESHOLD = 3; // больше 3 объявлений у продавца = агент
+export const SELLER_LISTINGS_AGENT_THRESHOLD = 2; // больше 2 объявлений у продавца = агент

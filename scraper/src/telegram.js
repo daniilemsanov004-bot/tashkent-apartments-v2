@@ -106,14 +106,31 @@ function buildMessagePayload(listing) {
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
-    const national = digits.startsWith('998') ? digits.slice(3) : digits;
-    const cleanPhone = `+998${national}`;
-    buttons.push([
-      { text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` },
-      { text: '📞 Позвонить', url: `tel:${cleanPhone}` },
-    ]);
+    // ⚠️ Кнопка "Позвонить" (tel:) раньше была тут, но Telegram
+    // официально не поддерживает схему tel: в url кнопок и из-за неё
+    // ОТКЛОНЯЕТ ВСЁ СООБЩЕНИЕ целиком ("Wrong port number specified
+    // in the URL") — то есть объявление вообще не доходило до
+    // группы, если был найден телефон. Убрал кнопку — номер и так
+    // виден в тексте сообщения и сам по себе кликабелен в Telegram.
+    buttons.push([{ text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` }]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
+  // Кнопки статуса — при первой отправке объявление всегда ещё не
+  // взято в работу и не отмечено "связался" (только что появилось),
+  // поэтому кнопки в начальном виде. Дальше, при нажатии, webhook
+  // (client/api/telegram-webhook.js) сам пересобирает и текст, и
+  // кнопки сообщения под актуальный статус — см. buildListingButtons
+  // в client/api/_listingMessage.js (та же логика формата кнопок,
+  // продублирована по той же причине, что и в других местах между
+  // scraper/ и client/api/: два разных deployable-проекта).
+  buttons.push([
+    { text: '✅ Связался', callback_data: `ct:${listing.id}` },
+    { text: '👤 Беру в работу', callback_data: `as:${listing.id}` },
+  ]);
+  buttons.push([
+    { text: '🚫 Это агент', callback_data: `fl:${listing.id}` },
+    { text: '📝 Заметка', callback_data: `nt:${listing.id}` },
+  ]);
 
   return { message, buttons };
 }

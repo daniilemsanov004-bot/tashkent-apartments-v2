@@ -208,7 +208,48 @@ export async function fetchOlxDetails(url) {
     sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict };
+  // Телефон — самое важное поле для агентства, но самое ненадёжное на
+  // OLX: он почти всегда скрыт за кнопкой "показать номер" и не лежит
+  // в исходном HTML открытым текстом (в отличие от района). Пробуем
+  // несколько путей по возрастанию сложности:
+  //  1) вдруг номер всё-таки есть прямо в HTML (некоторые продавцы
+  //     дублируют его в описании — это уже покрыто PHONE_REGEX в
+  //     run.js, тут не дублируем);
+  //  2) ищем номер прямо в служебном JSON страницы — как ни странно,
+  //     иногда встречается под ключами вида "phone"/"phoneNumber",
+  //     даже если кнопка "показать номер" тоже есть на странице;
+  //  3) если не нашли — пробуем вызвать fetchOlxPhone() через
+  //     numeric ID объявления (не наш "ID4pYww" из ссылки — настоящий
+  //     числовой id, который OLX хранит в этом же JSON рядом с
+  //     заголовком/описанием).
+  // ⚠️ Пункты 2 и 3 НЕ проверены на реальном прогоне (нет доступа в
+  // интернет там, где это писалось) — если после первого прогона на
+  // GitHub Actions телефоны по-прежнему не находятся, посмотрите в
+  // логах строку "[olx-details] телефон не найден..." — она печатает
+  // кусок сырого JSON страницы, по нему можно будет поправить регулярку.
+  let phone = null;
+  const jsonPhoneMatch = html.match(/"phone(?:Number)?"\s*:\s*"(\+?\d[\d\s\-()]{6,17}\d)"/i);
+  if (jsonPhoneMatch) {
+    phone = jsonPhoneMatch[1];
+  } else {
+    const adIdMatch = html.match(/"id"\s*:\s*(\d{6,12})\s*,\s*"(?:title|url|slug)"/);
+    const adId = adIdMatch ? adIdMatch[1] : null;
+    if (adId) {
+      phone = await fetchOlxPhone(adId);
+    }
+    if (!phone) {
+      const phoneContext = [...html.matchAll(/.{0,30}phone.{0,60}/gi)].slice(0, 3).map((m) => m[0].replace(/\s+/g, ' '));
+      const hasNextData = html.includes('__NEXT_DATA__');
+      const hasPreloadedState = /__PRELOADED_STATE__|__INITIAL_STATE__/.test(html);
+      console.log(
+        `[olx-details] телефон не найден для ${url} (adId=${adId || 'не определён'}); ` +
+          `слово "phone" в HTML: ${phoneContext.length ? phoneContext.join(' || ') : 'НЕ встречается вообще'}; ` +
+          `__NEXT_DATA__ есть: ${hasNextData}; __PRELOADED_STATE__/__INITIAL_STATE__ есть: ${hasPreloadedState}`
+      );
+    }
+  }
+
+  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict, phone };
 }
 
 /**
@@ -264,14 +305,19 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
 /**
  * Номер телефона на OLX обычно скрыт за кнопкой "показать номер" и
  * подгружается отдельным XHR-запросом к их внутреннему API (не через
- * обычный HTML). Чтобы найти актуальный URL этого запроса:
- *   1. Откройте объявление в браузере.
+ * обычный HTML). Теперь вызывается из fetchOlxDetails() (см. выше),
+ * когда номер не нашёлся напрямую в JSON страницы.
+ *
+ * ⚠️ Эндпоинт и формат ответа НЕ подтверждены на реальном прогоне —
+ * если после первого запуска на GitHub Actions в логах будет видно
+ * "не удалось получить телефон" со статусом 404 — значит либо
+ * offerId определяется неверно (см. adIdMatch в fetchOlxDetails),
+ * либо сам путь запроса изменился. В этом случае:
+ *   1. Откройте любое объявление OLX в браузере.
  *   2. DevTools → вкладка Network → нажмите "показать номер".
- *   3. Найдите запрос (обычно к чему-то вроде /api/v1/offers/{id}/phones)
- *      и скопируйте его точный путь и параметры сюда.
- * Ниже — заглушка, которую нужно донастроить под реальный эндпоинт.
- * Пока не вызывается нигде в коде — номер, если есть, ищется прямо
- * в тексте описания (см. PHONE_REGEX в server.js/index.js).
+ *   3. Найдите реальный запрос и путь → пришлите его, поправим тут.
+ * Одна попытка (без ретраев) — чтобы не спамить недоподтверждённый
+ * эндпоинт, если он окажется неверным.
  */
 export async function fetchOlxPhone(offerId) {
   try {
@@ -284,10 +330,15 @@ export async function fetchOlxPhone(offerId) {
         },
         timeout: 10000,
       },
-      1 // одна попытка — это заглушка, не хотим спамить недоделанным эндпоинтом
+      1
     );
-    return data?.data?.phones?.[0] || null;
+    const phone = data?.data?.phones?.[0] || null;
+    if (!phone) {
+      console.log(`[olx-phone] ответ API для offerId=${offerId} не содержит телефона: ${JSON.stringify(data).slice(0, 300)}`);
+    }
+    return phone;
   } catch (err) {
+    console.warn(`[olx-phone] не удалось получить телефон для offerId=${offerId}: ${err.response?.status || ''} ${err.message}`);
     return null;
   }
 }

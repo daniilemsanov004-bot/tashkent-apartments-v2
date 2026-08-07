@@ -189,6 +189,32 @@ export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartm
  * - ссылку "Все объявления автора" (чтобы посчитать, сколько у него
  *   объявлений — если много, это почти наверняка агентство)
  */
+/**
+ * OLX кладёт на КАЖДУЮ страницу объявления структурированный блок
+ * <script type="application/ld+json"> (schema.org/Product) — для
+ * поисковиков, но нам он тоже полезен: там надёжно, без хрупкого
+ * парсинга вёрстки, лежат sku (числовой ID — нужен для запроса
+ * телефона, см. fetchOlxPhone), цена+валюта и район (areaServed.name).
+ * Подтверждено вживую 06.08.2026 (реальный HTML конкретного
+ * объявления), формат:
+ *   { "sku": "65297366",
+ *     "offers": { "price": 8, "priceCurrency": "USD" },
+ *     "offers": { "areaServed": { "name": "Юнусабадский район" } } }
+ */
+function parseJsonLd($) {
+  let result = null;
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (result) return;
+    try {
+      const json = JSON.parse($(el).contents().text());
+      if (json && json['@type'] === 'Product') result = json;
+    } catch {
+      // не JSON-LD или битый — пропускаем, это не критично, есть fallback'и
+    }
+  });
+  return result;
+}
+
 export async function fetchOlxDetails(url) {
   const { data: html } = await getWithRetry(url, {
     headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -197,20 +223,38 @@ export async function fetchOlxDetails(url) {
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
 
-  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления показывает адрес вида
-  // "Ташкент, Юнусабадский район" — структурное поле, надёжнее, чем
-  // угадывание района по тексту объявления (продавец может вообще не
-  // упомянуть район в описании, особенно если пишет только название ЖК).
-  // Точный CSS-класс этого блока не подтверждён вживую (нет сетевого
-  // доступа, чтобы открыть реальную страницу и проверить разметку) —
-  // поэтому ищем по тексту всей страницы, а не по конкретному селектору:
-  // это надёжнее к возможным отличиям вёрстки между объявлениями и к
-  // будущим изменениям дизайна OLX. Если вдруг перестанет находить —
-  // нужно свериться с реальной разметкой страницы (DevTools → Elements
-  // на блоке "МЕСТОПОЛОЖЕНИЕ") и уточнить регулярку/добавить селектор.
+  const jsonLd = parseJsonLd($);
+  const offerId = jsonLd?.sku || null;
+
+  // Телефон — через подтверждённый вживую эндпоинт (см. fetchOlxPhone).
+  // Работает только если нашли числовой ID в JSON-LD; если нет — просто
+  // не будет номера с этого источника, останется fallback на текст
+  // описания (см. PHONE_REGEX в run.js).
+  let phone = null;
+  if (offerId) {
+    phone = await fetchOlxPhone(offerId);
+  }
+
+  // Цена и район из JSON-LD — надёжнее регулярок по вёрстке, но не
+  // всегда достоверны (например, у коммерции offers.price иногда
+  // указан "за м²", а не общей суммой) — поэтому это ДОПОЛНИТЕЛЬНЫЙ
+  // источник, itog price всё ещё проходит через isPlausiblePrice в
+  // fetchOlxListings, откуда берётся основная цена. Здесь просто
+  // возвращаем как альтернативу, run.js решает, что использовать.
+  let ldPrice = null;
+  if (jsonLd?.offers?.price && jsonLd?.offers?.priceCurrency) {
+    const currencyLabel = jsonLd.offers.priceCurrency === 'USD' ? 'у.е.' : 'сум';
+    ldPrice = `${jsonLd.offers.price} ${currencyLabel}`;
+  }
+  const ldDistrict = jsonLd?.offers?.areaServed?.name || jsonLd?.areaServed?.name || null;
+
+  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления — запасной вариант на
+  // случай, если в JSON-LD района нет (fallback, менее надёжный, чем
+  // ldDistrict выше, — ищем по тексту всей страницы, так как точный
+  // CSS-класс блока не подтверждён вживую).
   const bodyText = $('body').text().replace(/\s+/g, ' ');
   const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
-  const locationDistrict = locationMatch ? locationMatch[1].trim() : null;
+  const locationDistrict = ldDistrict || (locationMatch ? locationMatch[1].trim() : null);
 
   // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
   // CSS-классу (он может меняться, а текст кнопки — вряд ли).
@@ -237,7 +281,14 @@ export async function fetchOlxDetails(url) {
     sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict };
+  return {
+    description,
+    sellerName: sellerName || null,
+    sellerListingsUrl,
+    locationDistrict,
+    phone,
+    ldPrice,
+  };
 }
 
 /**
@@ -292,16 +343,15 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
 }
 
 /**
- * Номер телефона на OLX обычно скрыт за кнопкой "показать номер" и
- * подгружается отдельным XHR-запросом к их внутреннему API (не через
- * обычный HTML). Чтобы найти актуальный URL этого запроса:
- *   1. Откройте объявление в браузере.
- *   2. DevTools → вкладка Network → нажмите "показать номер".
- *   3. Найдите запрос (обычно к чему-то вроде /api/v1/offers/{id}/phones)
- *      и скопируйте его точный путь и параметры сюда.
- * Ниже — заглушка, которую нужно донастроить под реальный эндпоинт.
- * Пока не вызывается нигде в коде — номер, если есть, ищется прямо
- * в тексте описания (см. PHONE_REGEX в server.js/index.js).
+ * Номер телефона на OLX скрыт за кнопкой "показать номер" и
+ * подгружается отдельным запросом к их внутреннему API. Эндпоинт и
+ * формат ответа ПОДТВЕРЖДЕНЫ ВЖИВУЮ 06.08.2026 (через DevTools →
+ * Network на реальном объявлении):
+ *   GET https://www.olx.uz/api/v1/offers/{offerId}/limited-phones/
+ *   → { "data": { "phones": ["+99 893 1804767"] } }
+ * offerId — это ЧИСЛОВОЙ ID (не то же самое, что буквенно-цифровой код
+ * из URL объявления вроде "ID4pYww") — берём его из sku в JSON-LD
+ * блока на странице объявления, см. parseJsonLd/fetchOlxDetails выше.
  */
 export async function fetchOlxPhone(offerId) {
   try {
@@ -314,10 +364,11 @@ export async function fetchOlxPhone(offerId) {
         },
         timeout: 10000,
       },
-      1 // одна попытка — это заглушка, не хотим спамить недоделанным эндпоинтом
+      2
     );
     return data?.data?.phones?.[0] || null;
   } catch (err) {
+    console.warn(`Не удалось получить телефон (offerId=${offerId}):`, err.message);
     return null;
   }
 }

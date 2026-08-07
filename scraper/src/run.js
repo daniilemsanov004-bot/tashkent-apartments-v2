@@ -54,6 +54,17 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
       // тексте, потому что это самое надёжное поле, когда доступно.
       if (details?.phone) item.phone_from_details = details.phone;
+      // Цена из JSON-LD (см. fetchOlxDetails) — надёжнее, чем то, что
+      // нашлось при скрапинге списка (структурные данные, а не парсинг
+      // вёрстки). Предпочитаем её везде, КРОМЕ коммерции — там
+      // offers.price на OLX иногда указан "за м²", а не общей суммой,
+      // так что для коммерции берём её только как подстраховку, если
+      // со страницы списка цена вообще не нашлась.
+      if (details?.ldPrice) {
+        if (propertyType !== 'commercial' || !item.price) {
+          item.price = details.ldPrice;
+        }
+      }
       // Структурное поле "район" со страницы объявления (сейчас — блок
       // "МЕСТОПОЛОЖЕНИЕ" на OLX, см. fetchOlxDetails). У Uybor
       // raw_district уже выставлен на этапе списка (fetchUyborListings),

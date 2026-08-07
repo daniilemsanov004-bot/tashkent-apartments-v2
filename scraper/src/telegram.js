@@ -126,10 +126,13 @@ function buildMessagePayload(listing) {
     { text: '✅ Связался', callback_data: `ct:${listing.id}` },
     { text: '👤 Беру в работу', callback_data: `as:${listing.id}` },
   ]);
+<<<<<<< HEAD
   buttons.push([
     { text: '🚫 Это агент', callback_data: `fl:${listing.id}` },
     { text: '📝 Заметка', callback_data: `nt:${listing.id}` },
   ]);
+=======
+>>>>>>> a8eaa5b875f521546dcdd801445f7f0dbe1ecab0
 
   return { message, buttons };
 }

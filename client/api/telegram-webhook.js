@@ -377,6 +377,7 @@ async function handleCallback(update) {
     await toggleAssigned(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
     return;
   }
+<<<<<<< HEAD
   if (data.startsWith('fl:')) {
     await toggleFlaggedAgent(chatId, messageId, data.slice(3), displayName(cb.from), cb.id);
     return;
@@ -386,6 +387,8 @@ async function handleCallback(update) {
     await answerCallbackQuery(cb.id);
     return;
   }
+=======
+>>>>>>> a8eaa5b875f521546dcdd801445f7f0dbe1ecab0
 
   await answerCallbackQuery(cb.id);
 

@@ -106,12 +106,15 @@ function buildMessagePayload(listing) {
   const buttons = [];
   if (listing.phone) {
     const digits = listing.phone.replace(/[^\d]/g, '');
-    const national = digits.startsWith('998') ? digits.slice(3) : digits;
-    const cleanPhone = `+998${national}`;
-    buttons.push([
-      { text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` },
-      { text: '📞 Позвонить', url: `tel:${cleanPhone}` },
-    ]);
+    // Кнопку "Позвонить" через url: 'tel:...' убрали — в Bot API
+    // официально поддерживаются только http(s):// и tg:// (см. доки
+    // InlineKeyboardButton), 'tel:' работает "на птичьих правах" и
+    // иногда Telegram отвечает 400 Bad Request ("Wrong port number
+    // specified in the URL") на конкретных номерах, роняя отправку
+    // всего сообщения целиком. Номер телефона у нас и так есть текстом
+    // в сообщении (phoneLine выше) — Telegram сам подсвечивает номера
+    // кликабельными в тексте, кнопка для этого не нужна.
+    buttons.push([{ text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` }]);
   }
   buttons.push([{ text: '🔗 Открыть объявление', url: listing.url }]);
   // Кнопки статуса — при первой отправке объявление всегда ещё не

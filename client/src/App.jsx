@@ -16,7 +16,7 @@ function timeAgo(iso) {
 
 function badgeFor(listing) {
   if (listing.label_kind === 'owner') return { cls: 'badge-owner', text: '✓ Собственник' };
-  if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: 'Без проверки ИИ' };
+  if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: `🙂 ${listing.label_text || 'Собственник'}` };
   if (listing.label_kind === 'agent') return { cls: 'badge-agent', text: `🏢 ${listing.label_text || 'Агентство'}` };
   return { cls: 'badge-unsure', text: '? Сомнительно' };
 }
@@ -48,6 +48,7 @@ function Card({ listing, onToggleContacted }) {
             <span className="source-tag">{listing.source}</span>
             &nbsp;·&nbsp;{timeAgo(listing.created_at)}
             {listing.district ? ` · 📍 ${listing.district}` : ''}
+            {listing.assigned_to ? ` · 👤 Взял: ${listing.assigned_to}` : ''}
           </p>
         </div>
         <span className={`badge ${badge.cls}`}>{badge.text}</span>
@@ -408,7 +409,7 @@ function Dashboard() {
         if (!haystack.includes(q)) return false;
       }
       if (badgeFilter === 'owner' && l.label_kind !== 'owner') return false;
-      if (badgeFilter === 'unsure' && l.label_kind !== 'unsure') return false;
+      if (badgeFilter === 'unsure' && l.label_kind !== 'uncertain') return false;
       if (dealFilter !== 'all' && l.deal_type !== dealFilter) return false;
       if (typeFilter !== 'all' && (l.property_type || 'apartment') !== typeFilter) return false;
       if (contactedFilter === 'contacted' && !l.contacted) return false;

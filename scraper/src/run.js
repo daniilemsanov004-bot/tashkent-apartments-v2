@@ -9,7 +9,17 @@ import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
-const USE_AI_CLASSIFICATION = process.env.USE_AI_CLASSIFICATION === 'true';
+
+// ИИ-классификация отключена по решению (05.08.2026) — весь проект
+// теперь работает только на жёстких правилах (много объявлений у
+// продавца / аккаунт-организация / метка сайта), без обращения к
+// Anthropic API. Код классификации (classify.js, ветка ниже) НЕ
+// удалён — просто эта константа жёстко зафиксирована в false, так
+// что ветка с classifyListing() больше не выполняется, даже если
+// кто-то случайно оставит USE_AI_CLASSIFICATION=true в GitHub Secrets.
+// Если понадобится снова включить ИИ — верните строку ниже на
+// `process.env.USE_AI_CLASSIFICATION === 'true'`.
+const USE_AI_CLASSIFICATION = false;
 
 async function processSource(fetchList, fetchDetails, sourceName, dealType, fetchSellerCount = null, propertyType = 'apartment') {
   const sourceLabel = `${sourceName}-${propertyType}-${dealType}`;
@@ -40,6 +50,10 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       if (details?.description) rawText = `${item.title}\n${details.description}`;
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
+      // Телефон со страницы объявления (пока реализовано только для
+      // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
+      // тексте, потому что это самое надёжное поле, когда доступно.
+      if (details?.phone) item.phone_from_details = details.phone;
       // Структурное поле "район" со страницы объявления (сейчас — блок
       // "МЕСТОПОЛОЖЕНИЕ" на OLX, см. fetchOlxDetails). У Uybor
       // raw_district уже выставлен на этапе списка (fetchUyborListings),
@@ -169,7 +183,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       price_currency: priceCurrency,
       rooms: classification.rooms,
       area: classification.area,
-      phone: classification.phone || phoneFromApi || phoneFromText,
+      phone: item.phone_from_details || phoneFromApi || phoneFromText,
       seller_type: classification.seller_type,
       confidence: classification.confidence,
       label_text: label.text,
@@ -177,6 +191,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       notified: false,
     };
     delete listing.phone_from_api; // служебное поле, в базу не пишем
+    delete listing.phone_from_details; // тоже служебное — уже перенесено в phone
     delete listing.raw_district; // тоже служебное — уже перенесено в district/district_raw
 
     await saveListing(listing);

@@ -18,7 +18,11 @@ export default async function handler(req, res) {
 
   const { data, error } = await supabase
     .from('listings')
-    .update({ contacted: !!contacted })
+    .update({
+      contacted: !!contacted,
+      contacted_by: contacted ? email : null,
+      contacted_at: contacted ? new Date().toISOString() : null,
+    })
     .eq('id', id)
     .select()
     .maybeSingle();

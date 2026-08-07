@@ -1,6 +1,5 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
-import { normalizeDistrict } from '../districts.js';
 
 // Два раздела — аренда и продажа квартир по Ташкенту. Забираем ВСЕ
 // объявления в каждом, не только помеченные сайтом "от собственника"
@@ -159,29 +158,20 @@ export async function fetchOlxDetails(url) {
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
 
-  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления рендерится из
-  // встроенного JSON с данными страницы. Вы прислали реальный кусок
-  // этого JSON прямо со страницы:
-  //   "location":{"cityName":"Ташкент","regionName":"Ташкентская область",
-  //   "districtName":"Сергелийский район","districtId":19,...}
-  // Это НАМНОГО надёжнее, чем искать текст "МЕСТОПОЛОЖЕНИЕ" на странице:
-  // название района тут — обычное значение JSON-поля, а не завязано на
-  // конкретную вёрстку/CSS-класс блока, которые могут меняться. Тянем
-  // его прямо регуляркой из HTML — неважно, в каком именно <script>
-  // сериализован этот JSON (Next.js __NEXT_DATA__, Apollo state и т.п.),
-  // значение всё равно попадает в текст страницы как обычная строка.
-  const districtNameMatch = html.match(/"districtName"\s*:\s*"([^"]+)"/);
-  const rawDistrictName = districtNameMatch ? districtNameMatch[1].trim() : null;
-  let locationDistrict = normalizeDistrict(rawDistrictName);
-
-  // Запасной путь — на случай, если в этот раз JSON-поле не нашлось
-  // (например, OLX поменял формат сериализации): ищем блок
-  // "МЕСТОПОЛОЖЕНИЕ" по обычному тексту страницы, как раньше.
-  if (!locationDistrict) {
-    const bodyText = $('body').text().replace(/\s+/g, ' ');
-    const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
-    locationDistrict = locationMatch ? normalizeDistrict(locationMatch[1].trim()) : null;
-  }
+  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления показывает адрес вида
+  // "Ташкент, Юнусабадский район" — структурное поле, надёжнее, чем
+  // угадывание района по тексту объявления (продавец может вообще не
+  // упомянуть район в описании, особенно если пишет только название ЖК).
+  // Точный CSS-класс этого блока не подтверждён вживую (нет сетевого
+  // доступа, чтобы открыть реальную страницу и проверить разметку) —
+  // поэтому ищем по тексту всей страницы, а не по конкретному селектору:
+  // это надёжнее к возможным отличиям вёрстки между объявлениями и к
+  // будущим изменениям дизайна OLX. Если вдруг перестанет находить —
+  // нужно свериться с реальной разметкой страницы (DevTools → Elements
+  // на блоке "МЕСТОПОЛОЖЕНИЕ") и уточнить регулярку/добавить селектор.
+  const bodyText = $('body').text().replace(/\s+/g, ' ');
+  const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
+  const locationDistrict = locationMatch ? locationMatch[1].trim() : null;
 
   // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
   // CSS-классу (он может меняться, а текст кнопки — вряд ли).
@@ -208,79 +198,13 @@ export async function fetchOlxDetails(url) {
     sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
-  // Телефон — самое важное поле для агентства, но самое ненадёжное на
-  // OLX: он почти всегда скрыт за кнопкой "показать номер" и не лежит
-  // в исходном HTML открытым текстом (в отличие от района). Пробуем
-  // несколько путей по возрастанию сложности:
-  //  1) вдруг номер всё-таки есть прямо в HTML (некоторые продавцы
-  //     дублируют его в описании — это уже покрыто PHONE_REGEX в
-  //     run.js, тут не дублируем);
-  //  2) ищем номер прямо в служебном JSON страницы — как ни странно,
-  //     иногда встречается под ключами вида "phone"/"phoneNumber",
-  //     даже если кнопка "показать номер" тоже есть на странице;
-  //  3) если не нашли — пробуем вызвать fetchOlxPhone() через
-  //     numeric ID объявления (не наш "ID4pYww" из ссылки — настоящий
-  //     числовой id, который OLX хранит в этом же JSON рядом с
-  //     заголовком/описанием).
-  // ⚠️ Пункты 2 и 3 НЕ проверены на реальном прогоне (нет доступа в
-  // интернет там, где это писалось) — если после первого прогона на
-  // GitHub Actions телефоны по-прежнему не находятся, посмотрите в
-  // логах строку "[olx-details] телефон не найден..." — она печатает
-  // кусок сырого JSON страницы, по нему можно будет поправить регулярку.
-  let phone = null;
-  const jsonPhoneMatch = html.match(/"phone(?:Number)?"\s*:\s*"(\+?\d[\d\s\-()]{6,17}\d)"/i);
-  if (jsonPhoneMatch) {
-    phone = jsonPhoneMatch[1];
-  } else {
-    const adIdMatch = html.match(/"id"\s*:\s*(\d{6,12})\s*,\s*"(?:title|url|slug)"/);
-    const adId = adIdMatch ? adIdMatch[1] : null;
-    if (adId) {
-      phone = await fetchOlxPhone(adId);
-    }
-    if (!phone) {
-<<<<<<< HEAD
-      const phoneContext = [...html.matchAll(/.{0,30}phone.{0,60}/gi)].slice(0, 3).map((m) => m[0].replace(/\s+/g, ' '));
-      const hasNextData = html.includes('__NEXT_DATA__');
-      const hasPreloadedState = /__PRELOADED_STATE__|__INITIAL_STATE__/.test(html);
-      console.log(
-        `[olx-details] телефон не найден для ${url} (adId=${adId || 'не определён'}); ` +
-          `слово "phone" в HTML: ${phoneContext.length ? phoneContext.join(' || ') : 'НЕ встречается вообще'}; ` +
-          `__NEXT_DATA__ есть: ${hasNextData}; __PRELOADED_STATE__/__INITIAL_STATE__ есть: ${hasPreloadedState}`
-      );
-=======
-      console.log(`[olx-details] телефон не найден для ${url} (adId=${adId || 'не определён'}); фрагмент JSON: ${html.slice(0, 300).replace(/\s+/g, ' ')}`);
->>>>>>> 613e8b4f1d02fdb18fae37664e3b9b1751c1491e
-    }
-  }
-
-  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict, phone };
+  return { description, sellerName: sellerName || null, sellerListingsUrl, locationDistrict };
 }
 
 /**
- * Слова, по которым слаг ссылки объявления похож на недвижимость.
- * OLX кладёт в URL человекочитаемый транслит заголовка — например
- * .../prodaetsya-3-komnatnaya-kvartira-na-6-etazhe-ID4pYww.html — поэтому
- * можно довольно надёжно отличить "квартира/дом/участок/офис" от
- * "iphone", "toyota" и т.д. прямо по самой ссылке, не открывая её.
- */
-const REAL_ESTATE_SLUG_RE =
-  /kvartir|kottedj|dom[ao]?[^a-z]|nedvizh|kommerch|ofis|sklad|magazin|pomeshen|uchastok|taunhaus|zemel/i;
-
-/**
- * Считает, сколько объявлений НЕДВИЖИМОСТИ у продавца на его странице
- * "Все объявления автора". Если их заметно больше одного-двух — это
- * почти наверняка агентство/риелтор, даже если сам текст объявления
- * звучит по-человечески.
- *
- * ВАЖНО: страница "Все объявления автора" показывает объявления ВО ВСЕХ
- * категориях OLX (машины, телефоны, мебель — что угодно), а не только
- * недвижимость. Раньше здесь считались вообще все ссылки на объявления
- * подряд — из-за этого обычный человек, продающий заодно старый телефон
- * или диван, уже набирал 3+ "объявления" и ошибочно помечался как
- * агентство. Это и было причиной, почему ~84% объявлений улетали в
- * "агент" (диагностика от 06.08.2026). Теперь считаем только ссылки,
- * похожие на недвижимость (см. REAL_ESTATE_SLUG_RE).
- *
+ * Считает, сколько объявлений у продавца на его странице "Все объявления
+ * автора". Если их заметно больше одного-двух — это почти наверняка
+ * агентство/риелтор, даже если сам текст объявления звучит по-человечески.
  * Возвращает null при ошибке (тогда просто не применяем это правило).
  */
 export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
@@ -295,7 +219,6 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
     const ids = new Set();
     $('a[href*="/d/obyavlenie/"]').each((_, el) => {
       const href = $(el).attr('href') || '';
-      if (!REAL_ESTATE_SLUG_RE.test(href)) return; // не про недвижимость — не считаем
       const m = href.match(LISTING_LINK_RE);
       if (m) ids.add(m[1]);
     });
@@ -309,19 +232,14 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
 /**
  * Номер телефона на OLX обычно скрыт за кнопкой "показать номер" и
  * подгружается отдельным XHR-запросом к их внутреннему API (не через
- * обычный HTML). Теперь вызывается из fetchOlxDetails() (см. выше),
- * когда номер не нашёлся напрямую в JSON страницы.
- *
- * ⚠️ Эндпоинт и формат ответа НЕ подтверждены на реальном прогоне —
- * если после первого запуска на GitHub Actions в логах будет видно
- * "не удалось получить телефон" со статусом 404 — значит либо
- * offerId определяется неверно (см. adIdMatch в fetchOlxDetails),
- * либо сам путь запроса изменился. В этом случае:
- *   1. Откройте любое объявление OLX в браузере.
+ * обычный HTML). Чтобы найти актуальный URL этого запроса:
+ *   1. Откройте объявление в браузере.
  *   2. DevTools → вкладка Network → нажмите "показать номер".
- *   3. Найдите реальный запрос и путь → пришлите его, поправим тут.
- * Одна попытка (без ретраев) — чтобы не спамить недоподтверждённый
- * эндпоинт, если он окажется неверным.
+ *   3. Найдите запрос (обычно к чему-то вроде /api/v1/offers/{id}/phones)
+ *      и скопируйте его точный путь и параметры сюда.
+ * Ниже — заглушка, которую нужно донастроить под реальный эндпоинт.
+ * Пока не вызывается нигде в коде — номер, если есть, ищется прямо
+ * в тексте описания (см. PHONE_REGEX в server.js/index.js).
  */
 export async function fetchOlxPhone(offerId) {
   try {
@@ -334,15 +252,10 @@ export async function fetchOlxPhone(offerId) {
         },
         timeout: 10000,
       },
-      1
+      1 // одна попытка — это заглушка, не хотим спамить недоделанным эндпоинтом
     );
-    const phone = data?.data?.phones?.[0] || null;
-    if (!phone) {
-      console.log(`[olx-phone] ответ API для offerId=${offerId} не содержит телефона: ${JSON.stringify(data).slice(0, 300)}`);
-    }
-    return phone;
+    return data?.data?.phones?.[0] || null;
   } catch (err) {
-    console.warn(`[olx-phone] не удалось получить телефон для offerId=${offerId}: ${err.response?.status || ''} ${err.message}`);
     return null;
   }
 }

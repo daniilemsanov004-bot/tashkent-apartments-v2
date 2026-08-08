@@ -153,7 +153,11 @@ export async function notifyNewListing(listing) {
 
 // Соответствие property_type (+ deal_type для аренды квартир — у неё
 // отдельная супергруппа) → переменная окружения с chat_id группы.
-const TOPIC_GROUPS = {
+// Соответствие property_type (+ deal_type для аренды квартир — у неё
+// отдельная супергруппа) → переменная окружения с chat_id группы.
+// Экспортируем — нужно и другим скриптам (recheck-owners.js,
+// delete-agent-messages.js), чтобы не дублировать эту же карту.
+export const TOPIC_GROUPS = {
   apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
   apartment_rent: (process.env.TELEGRAM_GROUP_APARTMENT_RENT || '').trim(),
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
@@ -167,7 +171,7 @@ const TOPIC_GROUPS = {
  * не настроена — просто уходит в общую группу "Квартиры", как раньше,
  * ничего не ломается.
  */
-function resolveGroupKey(listing) {
+export function resolveGroupKey(listing) {
   if (listing.property_type === 'apartment' && listing.deal_type === 'rent' && TOPIC_GROUPS.apartment_rent) {
     return 'apartment_rent';
   }
@@ -180,23 +184,49 @@ function resolveGroupKey(listing) {
  * этого типа не настроена (нет в .env) — просто ничего не делает,
  * молча. Если район неизвестен/тема ещё не создана (setup-topics.js не
  * запускали для него) — уходит в общую тему группы.
+ *
+ * @returns {Promise<{chatId: string, messageId: number}|null>} —
+ *   данные отправленного сообщения (для сохранения в базе, чтобы потом
+ *   можно было программно удалить это конкретное сообщение), или null,
+ *   если отправка не удалась/не была настроена.
  */
 export async function notifyToTopicGroup(listing) {
   const groupKey = resolveGroupKey(listing);
   const targetChatId = TOPIC_GROUPS[groupKey];
-  if (!bot || !targetChatId) return;
+  if (!bot || !targetChatId) return null;
 
   const { message, buttons } = buildMessagePayload(listing);
   const messageThreadId = await getTopicId(groupKey, listing.district);
 
   try {
-    await bot.sendMessage(targetChatId, message, {
+    const sent = await bot.sendMessage(targetChatId, message, {
       disable_web_page_preview: false,
       reply_markup: { inline_keyboard: buttons },
       ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
     });
+    return { chatId: String(sent.chat.id), messageId: sent.message_id };
   } catch (err) {
     console.error(`Не удалось отправить в тематическую супергруппу (${groupKey}):`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Удаляет конкретное сообщение (используется, когда объявление задним
+ * числом переклассифицировали в агента — см. recheck-owners.js).
+ * Работает только для сообщений, у которых сохранены chat_id/message_id
+ * (см. markNotified в db.js) — то есть отправленных ПОСЛЕ того, как
+ * это стало сохраняться. Для более старых сообщений id не известен,
+ * автоматически удалить нечем.
+ */
+export async function deleteTelegramMessage(chatId, messageId) {
+  if (!bot || !chatId || !messageId) return false;
+  try {
+    await bot.deleteMessage(chatId, messageId);
+    return true;
+  } catch (err) {
+    console.error(`Не удалось удалить сообщение ${messageId} в чате ${chatId}:`, err.message);
+    return false;
   }
 }
 

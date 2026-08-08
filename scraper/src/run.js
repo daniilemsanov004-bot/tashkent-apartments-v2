@@ -277,8 +277,8 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // нужное: квартиры с известным районом уходят в свою тему, без
       // района — в "General" СВОЕЙ группы (но по-прежнему только
       // квартиры), а дома/коммерция — только в свои отдельные группы.
-      await notifyToTopicGroup(listing);
-      await markNotified(listing.id);
+      const sentTo = await notifyToTopicGroup(listing);
+      await markNotified(listing.id, sentTo);
       console.log(`[${sourceLabel}] уведомление отправлено (${label.kind}): ${listing.title}`);
     } catch (err) {
       console.error('Ошибка отправки в Telegram:', err.message);
@@ -335,4 +335,4 @@ async function main() {
 main().catch((err) => {
   console.error('Критическая ошибка:', err);
   process.exit(1);
-});
+}); 

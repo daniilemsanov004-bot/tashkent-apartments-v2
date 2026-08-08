@@ -45,10 +45,47 @@ export async function saveListing(listing) {
   return true;
 }
 
-export async function markNotified(id) {
-  const { error } = await supabase.from('listings').update({ notified: true }).eq('id', id);
+/**
+ * @param {string} id
+ * @param {{chatId?: string|number, messageId?: number}} [sentTo] — если
+ *   сообщение реально ушло в Telegram, сохраняем chat_id+message_id —
+ *   это позволяет позже программно удалить конкретное сообщение
+ *   (bot.deleteMessage), если объявление переклассифицируют в агента.
+ *   Без этого удалять приходилось только вручную, вслепую ища по всем
+ *   супергруппам (см. scraper/src/recheck-owners.js — там ссылки на
+ *   темы для случаев, когда message_id ещё не был сохранён).
+ */
+export async function markNotified(id, sentTo) {
+  const update = { notified: true };
+  if (sentTo?.chatId) update.telegram_chat_id = String(sentTo.chatId);
+  if (sentTo?.messageId) update.telegram_message_id = sentTo.messageId;
+  const { error } = await supabase.from('listings').update(update).eq('id', id);
   if (error) {
     console.error('Supabase (markNotified) ошибка:', error.message);
+  }
+}
+
+/**
+ * Достаёт сохранённые chat_id/message_id для объявления — нужно перед
+ * попыткой удалить его сообщение из Telegram (см. delete-agent-messages.js).
+ */
+export async function getTelegramMessageInfo(id) {
+  const { data, error } = await supabase
+    .from('listings')
+    .select('telegram_chat_id, telegram_message_id, telegram_deleted')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('Supabase (getTelegramMessageInfo) ошибка:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function markTelegramDeleted(id) {
+  const { error } = await supabase.from('listings').update({ telegram_deleted: true }).eq('id', id);
+  if (error) {
+    console.error('Supabase (markTelegramDeleted) ошибка:', error.message);
   }
 }
 

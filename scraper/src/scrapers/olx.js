@@ -215,7 +215,7 @@ function parseJsonLd($) {
   return result;
 }
 
-export async function fetchOlxDetails(url) {
+export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   const { data: html } = await getWithRetry(url, {
     headers: { 'User-Agent': 'Mozilla/5.0' },
     timeout: 15000,
@@ -231,7 +231,7 @@ export async function fetchOlxDetails(url) {
   // не будет номера с этого источника, останется fallback на текст
   // описания (см. PHONE_REGEX в run.js).
   let phone = null;
-  if (offerId) {
+  if (offerId && !skipPhone) {
     phone = await fetchOlxPhone(offerId);
   }
 

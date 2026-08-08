@@ -39,6 +39,16 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
   console.log(`[${sourceLabel}] найдено ${items.length} объявлений (сегодняшних) на странице`);
   if (items.length === 0) return;
 
+  // Счётчики для само-диагностики этого прогона — цель: если сайт
+  // тихо поменяет вёрстку и жёсткое правило "риэлтор по числу
+  // объявлений" перестанет срабатывать, мы должны узнать об этом из
+  // Telegram-алерта в течение 15 минут, а не из жалобы через
+  // несколько дней (см. баг 08.08.2026 — ссылка на профиль продавца
+  // перестала находиться, риэлторы пошли как собственники, и это
+  // никак не было видно, пока кто-то не заметил руками).
+  let sellerLinkMissingCount = 0;
+  let sellerCheckedCount = 0;
+
   for (const item of items) {
     if (await isKnown(item.id)) continue;
 
@@ -52,13 +62,17 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
       authorAdsCountHint = details?.authorAdsCountHint ?? null;
-      if (sourceName === 'olx' && fetchSellerCount && !sellerListingsUrl) {
-        // Раньше это никак не логировалось — если OLX поменяет вёрстку
-        // кнопки "все объявления автора", проверка на риэлтора молча
-        // не срабатывает, и агент просто проходит как "непонятно".
-        console.warn(
-          `[${sourceLabel}] не нашли ссылку на профиль продавца "${sellerName || '?'}" — проверка числа объявлений пропущена: ${item.url}`
-        );
+      if (sourceName === 'olx' && fetchSellerCount) {
+        sellerCheckedCount++;
+        if (!sellerListingsUrl) {
+          sellerLinkMissingCount++;
+          // Раньше это никак не логировалось — если OLX поменяет вёрстку
+          // кнопки "все объявления автора", проверка на риэлтора молча
+          // не срабатывает, и агент просто проходит как "непонятно".
+          console.warn(
+            `[${sourceLabel}] не нашли ссылку на профиль продавца "${sellerName || '?'}" — проверка числа объявлений пропущена: ${item.url}`
+          );
+        }
       }
       // Телефон со страницы объявления (пока реализовано только для
       // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
@@ -271,6 +285,21 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     }
 
     await new Promise((r) => setTimeout(r, 1200));
+  }
+
+  // Само-диагностика: если больше трети OLX-объявлений в этом прогоне
+  // не дали найти ссылку на профиль продавца — это почти наверняка
+  // значит, что OLX поменял вёрстку/текст кнопки, и жёсткое правило
+  // "риэлтор по числу объявлений" массово не срабатывает. Раньше такая
+  // поломка была не видна вообще никак, кроме как по жалобе через
+  // несколько дней — теперь шлём алерт сразу, в этом же прогоне.
+  // Порог (30%, минимум 5 проверенных) взят с запасом, чтобы не спамить
+  // из-за пары случайных сбоев сети на конкретных страницах.
+  if (sellerCheckedCount >= 5 && sellerLinkMissingCount / sellerCheckedCount > 0.3) {
+    await notifyAlert(
+      `⚠️ [${sourceLabel}] не найдена ссылка на профиль продавца у ${sellerLinkMissingCount} из ${sellerCheckedCount} объявлений. ` +
+        `Похоже, OLX поменял вёрстку — проверка "риэлтор по числу объявлений" может массово не срабатывать. Нужно проверить scrapers/olx.js.`
+    );
   }
 }
 

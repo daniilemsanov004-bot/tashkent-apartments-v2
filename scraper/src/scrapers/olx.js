@@ -256,45 +256,68 @@ export async function fetchOlxDetails(url) {
   const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
   const locationDistrict = ldDistrict || (locationMatch ? locationMatch[1].trim() : null);
 
-  // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
-  // CSS-классу (он может меняться, а текст кнопки — вряд ли).
-  //
-  // ⚠️ 08.08.2026: похоже, именно тут стала утекать часть риэлторов —
-  // если OLX чуть поменял формулировку кнопки, точное совпадение по
-  // "все объявления автора"/"все объявления продавца" перестаёт
-  // находить ссылку → sellerListingsUrl остаётся null → жёсткое
-  // правило по числу объявлений (fetchOlxSellerListingsCount) вообще
-  // не запускается для этого продавца, и агент с ~10 объявлениями
-  // тихо проходит как "непонятно/похоже на собственника". Раньше это
-  // ловилось только по точному тексту, без вариантов и без запасного
-  // пути — теперь: (1) более широкий поиск текста кнопки регуляркой,
-  // (2) запасной поиск по href-паттерну "/o/" (стандартный путь
-  // профиля продавца на OLX, не завязан на формулировку текста).
-  const AUTHOR_LINK_TEXT_RE = /все\s+объявлени|объявлени[яй]\s+(?:автора|продавца)|профиль\s+продавца/i;
+  // Ссылка на профиль продавца — раньше искали только по тексту самой
+  // кнопки, но это хрупко: OLX уже дважды менял формулировку (сначала
+  // "Все объявления автора" пропало как ссылка вообще, теперь рядом
+  // есть отдельная ссылка "Смотреть все" — а это слишком общая фраза,
+  // чтобы искать её по всей странице: такой же текст бывает у других
+  // каруселей вроде "Похожие объявления", и можно случайно схватить
+  // не ту ссылку). Порядок проверок — от самого надёжного к самому
+  // общему:
+  //  1) href-паттерн "/o/..." — это сам путь профиля продавца на OLX,
+  //     не зависит от текста/локализации кнопки вообще;
+  //  2) точный/предсказуемый текст ссылки ("все объявления автора" и
+  //     т.п.);
+  //  3) "смотреть все" — но ТОЛЬКО внутри контейнера заголовка "Все
+  //     объявления автора", а не по всей странице.
   let sellerListingsUrl = null;
   let authorLinkEl = null;
-  $('a').each((_, el) => {
+
+  $('a[href^="/o/"], a[href*="olx.uz/o/"]').each((_, el) => {
     if (sellerListingsUrl) return;
-    const text = $(el).text().trim().toLowerCase();
-    if (AUTHOR_LINK_TEXT_RE.test(text)) {
-      const href = $(el).attr('href');
-      if (href) {
-        sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
-        authorLinkEl = el;
-      }
+    const href = $(el).attr('href');
+    if (href) {
+      sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+      authorLinkEl = el;
     }
   });
+
+  const AUTHOR_LINK_TEXT_RE = /все\s+объявлени|объявлени[яй]\s+(?:автора|продавца)|профиль\s+продавца/i;
   if (!sellerListingsUrl) {
-    // Запасной путь: профильные ссылки на OLX начинаются с "/o/"
-    // независимо от текста кнопки/её локализации.
-    $('a[href^="/o/"], a[href*="olx.uz/o/"]').each((_, el) => {
+    $('a').each((_, el) => {
       if (sellerListingsUrl) return;
-      const href = $(el).attr('href');
-      if (href) {
-        sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
-        authorLinkEl = el;
+      const text = $(el).text().trim().toLowerCase();
+      if (AUTHOR_LINK_TEXT_RE.test(text)) {
+        const href = $(el).attr('href');
+        if (href) {
+          sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+          authorLinkEl = el;
+        }
       }
     });
+  }
+
+  if (!sellerListingsUrl) {
+    // Заголовок "Все объявления автора" — сейчас (08.08.2026) это уже
+    // не ссылка, а обычный текст (h2/div), рядом с ним отдельная
+    // ссылка "Смотреть все". Ищем именно эту пару: заголовок → ближайшая
+    // ссылка "смотреть все" В ЕГО ЖЕ КОНТЕЙНЕРЕ (родитель/дед), чтобы не
+    // подхватить одноимённую ссылку у другой карусели на странице.
+    const heading = $('*')
+      .filter((_, el) => {
+        const own = $(el).clone().children().remove().end().text().trim().toLowerCase();
+        return own === 'все объявления автора';
+      })
+      .first();
+    if (heading.length) {
+      const container = heading.closest('section, div').length ? heading.closest('section, div') : heading.parent();
+      const link = container.find('a').filter((_, el) => /смотреть\s*все/i.test($(el).text())).first();
+      const href = link.attr('href');
+      if (href) {
+        sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+        authorLinkEl = link.get(0);
+      }
+    }
   }
 
   // Доп. сигнал: OLX иногда пишет число объявлений автора прямо в

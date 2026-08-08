@@ -258,16 +258,62 @@ export async function fetchOlxDetails(url) {
 
   // Ссылка на профиль продавца — ищем по тексту самой кнопки, а не по
   // CSS-классу (он может меняться, а текст кнопки — вряд ли).
+  //
+  // ⚠️ 08.08.2026: похоже, именно тут стала утекать часть риэлторов —
+  // если OLX чуть поменял формулировку кнопки, точное совпадение по
+  // "все объявления автора"/"все объявления продавца" перестаёт
+  // находить ссылку → sellerListingsUrl остаётся null → жёсткое
+  // правило по числу объявлений (fetchOlxSellerListingsCount) вообще
+  // не запускается для этого продавца, и агент с ~10 объявлениями
+  // тихо проходит как "непонятно/похоже на собственника". Раньше это
+  // ловилось только по точному тексту, без вариантов и без запасного
+  // пути — теперь: (1) более широкий поиск текста кнопки регуляркой,
+  // (2) запасной поиск по href-паттерну "/o/" (стандартный путь
+  // профиля продавца на OLX, не завязан на формулировку текста).
+  const AUTHOR_LINK_TEXT_RE = /все\s+объявлени|объявлени[яй]\s+(?:автора|продавца)|профиль\s+продавца/i;
   let sellerListingsUrl = null;
+  let authorLinkEl = null;
   $('a').each((_, el) => {
+    if (sellerListingsUrl) return;
     const text = $(el).text().trim().toLowerCase();
-    if (text.includes('все объявления автора') || text.includes('все объявления продавца')) {
+    if (AUTHOR_LINK_TEXT_RE.test(text)) {
       const href = $(el).attr('href');
       if (href) {
         sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+        authorLinkEl = el;
       }
     }
   });
+  if (!sellerListingsUrl) {
+    // Запасной путь: профильные ссылки на OLX начинаются с "/o/"
+    // независимо от текста кнопки/её локализации.
+    $('a[href^="/o/"], a[href*="olx.uz/o/"]').each((_, el) => {
+      if (sellerListingsUrl) return;
+      const href = $(el).attr('href');
+      if (href) {
+        sellerListingsUrl = href.startsWith('http') ? href : `https://www.olx.uz${href}`;
+        authorLinkEl = el;
+      }
+    });
+  }
+
+  // Доп. сигнал: OLX иногда пишет число объявлений автора прямо в
+  // тексте рядом с кнопкой, например "Все объявления автора (34)".
+  // Если удалось выцепить это число — сохраняем как подстраховку на
+  // случай, если сама страница профиля не откроется/не распарсится
+  // (fetchOlxSellerListingsCount вернёт null) — тогда в run.js можно
+  // использовать этот hint вместо того, чтобы просто сдаваться.
+  // ВНИМАНИЕ: в отличие от fetchOlxSellerListingsCount, это число
+  // может включать объявления НЕ из недвижимости (та же причина бага,
+  // из-за которого раньше все считались агентами) — поэтому в run.js
+  // это используется только как fallback, не как основной сигнал.
+  let authorAdsCountHint = null;
+  if (authorLinkEl) {
+    const nearbyText = $(authorLinkEl).text() + ' ' + $(authorLinkEl).parent().text();
+    const countMatch = nearbyText.match(/\((\d+)\)|(\d+)\s*объявлен/i);
+    const num = countMatch ? Number(countMatch[1] || countMatch[2]) : null;
+    if (Number.isFinite(num)) authorAdsCountHint = num;
+  }
 
   // Имя продавца — точный селектор не подтверждён вживую, пробуем
   // несколько распространённых вариантов разметки OLX.
@@ -275,16 +321,16 @@ export async function fetchOlxDetails(url) {
     $('[data-cy="seller_name"]').text().trim() ||
     $('[data-testid="seller-name"]').text().trim() ||
     '';
-  if (!sellerName) {
+  if (!sellerName && authorLinkEl) {
     // запасной вариант: заголовок рядом с найденной ссылкой на профиль
-    const link = $('a').filter((_, el) => $(el).text().trim().toLowerCase().includes('все объявления автора')).first();
-    sellerName = link.closest('div').find('h4, h3, [class*="name"]').first().text().trim();
+    sellerName = $(authorLinkEl).closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
   return {
     description,
     sellerName: sellerName || null,
     sellerListingsUrl,
+    authorAdsCountHint,
     locationDistrict,
     phone,
     ldPrice,

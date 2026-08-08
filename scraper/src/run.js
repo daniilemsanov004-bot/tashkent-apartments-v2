@@ -45,11 +45,21 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let rawText = item.title;
     let sellerName = null;
     let sellerListingsUrl = null;
+    let authorAdsCountHint = null;
     try {
       const details = await fetchDetails(item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
+      authorAdsCountHint = details?.authorAdsCountHint ?? null;
+      if (sourceName === 'olx' && fetchSellerCount && !sellerListingsUrl) {
+        // Раньше это никак не логировалось — если OLX поменяет вёрстку
+        // кнопки "все объявления автора", проверка на риэлтора молча
+        // не срабатывает, и агент просто проходит как "непонятно".
+        console.warn(
+          `[${sourceLabel}] не нашли ссылку на профиль продавца "${sellerName || '?'}" — проверка числа объявлений пропущена: ${item.url}`
+        );
+      }
       // Телефон со страницы объявления (пока реализовано только для
       // OLX, см. fetchOlxDetails) — приоритетнее, чем поиск номера в
       // тексте, потому что это самое надёжное поле, когда доступно.
@@ -93,6 +103,24 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
         confirmedAgentReason = `${sellerListingsCount} объявлений`;
+      } else if (sellerListingsCount === null && authorAdsCountHint !== null) {
+        // Основная проверка не удалась (страница профиля не открылась/
+        // не распарсилась) — используем число со страницы самого
+        // объявления как запасной, менее точный сигнал (может включать
+        // не только недвижимость, поэтому берём порог с запасом заметно
+        // выше основного, чтобы не наступить на старый баг "все подряд
+        // считаются агентом").
+        if (authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
+          isConfirmedAgent = true;
+          confirmedAgentReason = `~${authorAdsCountHint} объявлений (со страницы, точная проверка не удалась)`;
+        }
+      }
+    } else if (fetchSellerCount && !sellerListingsUrl && authorAdsCountHint !== null) {
+      // Ссылку на профиль вообще не нашли (см. warn выше) — тот же
+      // запасной сигнал, что и в ветке выше.
+      if (authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
+        isConfirmedAgent = true;
+        confirmedAgentReason = `~${authorAdsCountHint} объявлений (со страницы, ссылка на профиль не найдена)`;
       }
     }
     if (!isConfirmedAgent && item.seller_is_organization) {

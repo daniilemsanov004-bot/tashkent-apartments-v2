@@ -222,17 +222,24 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     // Нормализация района — нужна для фильтра в Telegram-боте
     // (иначе "Чиланзар"/"Chilonzor"/"Чиланзарский район" не совпадут
-    // друг с другом). Приоритет источников:
-    //  1. Структурное поле с самого сайта (пока только Uybor,
-    //     item.raw_district) — самое надёжное.
-    //  2. Район, который вернула ИИ-классификация (если включена).
-    //  3. Fallback без ИИ: ищем упоминание района прямо в тексте
-    //     объявления — работает и без USE_AI_CLASSIFICATION.
+    // друг с другом). Приоритет источников (по явному решению):
+    //  1. То, что продавец САМ написал в тексте объявления (заголовок
+    //     + описание) — если он явно назвал район, это и есть самый
+    //     достоверный источник, даже если структурное поле сайта
+    //     говорит другое (JSON-поле показывает район ПУБЛИКАЦИИ
+    //     объявления на сайте, а не обязательно тот, о котором пишет
+    //     продавец, — бывают расхождения).
+    //  2. Район от ИИ-классификации (если включена) — тоже читает
+    //     текст объявления, тот же уровень доверия, что и п.1.
+    //  3. Структурное поле с самого сайта (item.raw_district — сейчас
+    //     JSON districtName у OLX, аналогичное поле у Uybor) —
+    //     используется, только если продавец вообще не упомянул район
+    //     в тексте.
     const district =
-      normalizeDistrict(item.raw_district) ||
+      normalizeDistrict(rawText) ||
       normalizeDistrict(classification.district) ||
-      normalizeDistrict(rawText);
-    const districtRaw = item.raw_district || classification.district || null;
+      normalizeDistrict(item.raw_district);
+    const districtRaw = classification.district || item.raw_district || null;
 
     // Числовая цена + валюта — нужны, чтобы бот мог фильтровать по
     // диапазону цены (price остаётся текстом для отображения как есть).
@@ -311,7 +318,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
   if (sellerCheckedCount >= 5 && sellerLinkMissingCount / sellerCheckedCount > 0.3) {
     await notifyAlert(
       `⚠️ [${sourceLabel}] не найдена ссылка на профиль продавца у ${sellerLinkMissingCount} из ${sellerCheckedCount} объявлений. ` +
-        `Похоже, OLX поменял вёрстку — проверка "риэлтор по числу объявлений" может массово не срабатывать. Нужно проверить scrapers/olx.js.`
+      `Похоже, OLX поменял вёрстку — проверка "риэлтор по числу объявлений" может массово не срабатывать. Нужно проверить scrapers/olx.js.`
     );
   }
 }

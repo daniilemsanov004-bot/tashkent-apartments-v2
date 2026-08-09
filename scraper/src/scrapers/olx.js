@@ -248,13 +248,27 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   }
   const ldDistrict = jsonLd?.offers?.areaServed?.name || jsonLd?.areaServed?.name || null;
 
-  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления — запасной вариант на
-  // случай, если в JSON-LD района нет (fallback, менее надёжный, чем
-  // ldDistrict выше, — ищем по тексту всей страницы, так как точный
-  // CSS-класс блока не подтверждён вживую).
+  // Район — ПОДТВЕРЖДЕНО ВЖИВУЮ (реальный кусок JSON со страницы,
+  // прислан пользователем): "location":{"cityName":"Ташкент",
+  // "districtName":"Сергелийский район","districtId":19,...}.
+  // Это основной, надёжный источник — обычное значение JSON-поля,
+  // не завязано на конкретную вёрстку/CSS-класс. ⚠️ Раньше этот блок
+  // был случайно вытеснен попыткой брать район из jsonLd.offers.
+  // areaServed (schema.org-поле, НЕ подтверждено вживую — скорее
+  // всего это просто город для SEO, не гранулярный район) — из-за
+  // этого объявления без района прямо в тексте описания переставали
+  // получать район вообще. Возвращаем как основной источник, JSON-LD
+  // and текстовый fallback — только как запасные варианты.
+  const districtNameMatch = html.match(/"districtName"\s*:\s*"([^"]+)"/);
+  const rawDistrictName = districtNameMatch ? districtNameMatch[1].trim() : null;
+
+  // Блок "МЕСТОПОЛОЖЕНИЕ" на странице объявления — самый слабый
+  // fallback, на случай если оба JSON-источника выше не сработали
+  // (ищем по тексту всей страницы, точный CSS-класс блока не
+  // подтверждён вживую).
   const bodyText = $('body').text().replace(/\s+/g, ' ');
   const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
-  const locationDistrict = ldDistrict || (locationMatch ? locationMatch[1].trim() : null);
+  const locationDistrict = rawDistrictName || ldDistrict || (locationMatch ? locationMatch[1].trim() : null);
 
   // Карточка "ПОЛЬЗОВАТЕЛЬ" (сайдбар) — ПОДТВЕРЖДЕНО ВЖИВУЮ 09.08.2026,
   // реальный пример (агент открыто назвал себя риэлтором):

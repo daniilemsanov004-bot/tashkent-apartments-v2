@@ -256,8 +256,46 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   const locationMatch = bodyText.match(/Ташкент\s*,\s*([А-ЯЁ][а-яё-]+\s+район)/i);
   const locationDistrict = ldDistrict || (locationMatch ? locationMatch[1].trim() : null);
 
-  // Ссылка на профиль продавца — ПОДТВЕРЖДЕНО ВЖИВУЮ 08.08.2026 через
-  // DevTools на реальной странице:
+  // Карточка "ПОЛЬЗОВАТЕЛЬ" (сайдбар) — ПОДТВЕРЖДЕНО ВЖИВУЮ 09.08.2026,
+  // реальный пример (агент открыто назвал себя риэлтором):
+  //   <div data-testid="aside" class="...">
+  //     <a href="https://realtorshovkat.olx.uz/home/" class="...">
+  //       <img alt="Shovkat Real Estate Agent" ...>
+  //       Realtor Shovkat
+  //       на OLX с июль 2023 г.
+  //       Все объявления автора →
+  //     </a>
+  //   </div>
+  // В отличие от карусели "Все объявления автора" ниже (которая
+  // показывается, только если у продавца ЕСТЬ другие объявления), эта
+  // карточка есть на КАЖДОЙ странице объявления — то есть надёжнее как
+  // источник ссылки на профиль в принципе.
+  //
+  // Плюс отсюда же берём МГНОВЕННЫЙ бесплатный сигнал агентства: если
+  // имя продавца или подпись у аватарки прямым текстом говорит
+  // "риэлтор"/"realtor"/"real estate agent"/"агентство" и т.п. — это
+  // безусловный признак агента, даже без похода на страницу профиля и
+  // подсчёта объявлений (у которого посчитанное число может быть и
+  // маленьким, если агент только начал работать на OLX).
+  const asideCard = $('[data-testid="aside"]');
+  let sellerCardName = '';
+  let sellerAvatarAlt = '';
+  if (asideCard.length) {
+    const asideLink = asideCard.find('a[href*=".olx.uz/"]').first();
+    const asideHref = asideLink.attr('href');
+    if (asideHref) {
+      sellerListingsUrl = asideHref.startsWith('http') ? asideHref : `https://www.olx.uz${asideHref}`;
+    }
+    sellerAvatarAlt = asideCard.find('img').attr('alt') || '';
+    sellerCardName = asideLink.text().trim();
+  }
+  const AGENT_NAME_HINT_RE = /риэлтор|риелтор|realtor|real\s*estate\s*agent|агентств|\bagency\b|\bagent\b/i;
+  const sellerNameLooksLikeAgent = AGENT_NAME_HINT_RE.test(`${sellerCardName} ${sellerAvatarAlt}`);
+
+  // Ссылка на профиль продавца — запасной путь (карусель "Все
+  // объявления автора"), если карточка "ПОЛЬЗОВАТЕЛЬ" выше почему-то не
+  // нашлась. ПОДТВЕРЖДЕНО ВЖИВУЮ 08.08.2026 через DevTools на реальной
+  // странице:
   //   <section class="..." data-cy="seller-other-ads">
   //     <div class="... flex">
   //       <h3 ...>Все объявления автора</h3>
@@ -276,11 +314,10 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   //     (authorAdsCountHint, который может путать категории и требует
   //     вдвое больший порог) — это и было основной причиной, почему
   //     агенты стабильно проскакивали.
-  let sellerListingsUrl = null;
   let authorLinkEl = null;
 
   const sellerSection = $('[data-cy="seller-other-ads"]');
-  if (sellerSection.length) {
+  if (!sellerListingsUrl && sellerSection.length) {
     const link = sellerSection.find('a[href]').first();
     const href = link.attr('href');
     if (href) {
@@ -357,9 +394,10 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     if (Number.isFinite(num)) authorAdsCountHint = num;
   }
 
-  // Имя продавца — точный селектор не подтверждён вживую, пробуем
-  // несколько распространённых вариантов разметки OLX.
+  // Имя продавца — сначала пробуем то, что уже нашли в карточке
+  // "ПОЛЬЗОВАТЕЛЬ" выше (sellerCardName), это самый надёжный источник.
   let sellerName =
+    sellerCardName ||
     $('[data-cy="seller_name"]').text().trim() ||
     $('[data-testid="seller-name"]').text().trim() ||
     '';
@@ -372,6 +410,7 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     description,
     sellerName: sellerName || null,
     sellerListingsUrl,
+    sellerNameLooksLikeAgent,
     authorAdsCountHint,
     locationDistrict,
     phone,

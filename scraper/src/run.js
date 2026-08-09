@@ -56,12 +56,14 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let sellerName = null;
     let sellerListingsUrl = null;
     let authorAdsCountHint = null;
+    let sellerNameLooksLikeAgent = false;
     try {
       const details = await fetchDetails(item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
       authorAdsCountHint = details?.authorAdsCountHint ?? null;
+      sellerNameLooksLikeAgent = details?.sellerNameLooksLikeAgent || false;
       if (sourceName === 'olx' && fetchSellerCount) {
         sellerCheckedCount++;
         if (!sellerListingsUrl) {
@@ -112,7 +114,18 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let isConfirmedAgent = false;
     let confirmedAgentReason = '';
 
-    if (fetchSellerCount && sellerListingsUrl) {
+    // Самая дешёвая проверка — бесплатная (без похода на страницу
+    // профиля): продавец сам назвал себя риэлтором/агентством в имени
+    // или подписи аватарки (см. sellerNameLooksLikeAgent в
+    // fetchOlxDetails). Ставим её первой, до счётчика объявлений —
+    // ловит агентов, у которых объявлений на OLX пока мало (только
+    // начали), но кто уже не скрывает, что не частник.
+    if (sellerNameLooksLikeAgent) {
+      isConfirmedAgent = true;
+      confirmedAgentReason = `имя/аватарка продавца ("${sellerName}") — риэлтор/агентство`;
+    }
+
+    if (!isConfirmedAgent && fetchSellerCount && sellerListingsUrl) {
       sellerListingsCount = await fetchSellerCount(sellerListingsUrl);
       if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
@@ -335,4 +348,4 @@ async function main() {
 main().catch((err) => {
   console.error('Критическая ошибка:', err);
   process.exit(1);
-}); 
+});

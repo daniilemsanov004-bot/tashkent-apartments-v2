@@ -18,32 +18,42 @@ export default async function handler(req, res) {
   const daysParam = req.query.days;
   const days = daysParam === 'all' ? null : Number(daysParam) || 3;
 
-  let query = supabase
-    .from('listings')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .range(0, 4999); // явно просим больше дефолтного лимита в 1000
-
-  if (days !== null) {
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    query = query.gte('created_at', cutoff);
+  function buildQuery() {
+    let query = supabase.from('listings').select('*').order('created_at', { ascending: false });
+    if (days !== null) {
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      query = query.gte('created_at', cutoff);
+    }
+    // Агентства (подтверждённые жёсткими правилами — много объявлений
+    // у продавца / аккаунт-организация) снова скрываем полностью — и с
+    // сайта, и (см. scraper/run.js) из Telegram. Раньше пробовали
+    // показывать всех с приоритетом собственников сверху, но по
+    // ощущениям агентских объявлений становится слишком много и они
+    // мешают — вернули как было. ?showAgents=true — для отладки.
+    if (req.query.showAgents !== 'true') {
+      query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
+    }
+    return query;
   }
 
-  // Агентства (подтверждённые жёсткими правилами — много объявлений
-  // у продавца / аккаунт-организация) снова скрываем полностью — и с
-  // сайта, и (см. scraper/run.js) из Telegram. Раньше пробовали
-  // показывать всех с приоритетом собственников сверху, но по
-  // ощущениям агентских объявлений становится слишком много и они
-  // мешают — вернули как было. ?showAgents=true — для отладки.
-  if (req.query.showAgents !== 'true') {
-    query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
+  // Supabase режет любой одиночный запрос лимитом в 1000 строк —
+  // раньше это обходили через .range(0, 4999), но это само по себе
+  // потолок в 5000: при days=all база уже переросла его, и лента
+  // молча обрезалась ("Показано: 5000 из 5000"). Вместо этого тянем
+  // страницами по 1000, пока не придёт страница короче полной — так
+  // никакого верхнего предела больше нет вообще.
+  const PAGE_SIZE = 1000;
+  let data = [];
+  let offset = 0;
+  for (;;) {
+    const { data: page, error } = await buildQuery().range(offset, offset + PAGE_SIZE - 1);
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    data = data.concat(page);
+    if (page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
   res.status(200).json(sortByPriority(data));

@@ -51,6 +51,16 @@ export function answerCallbackQuery(callbackQueryId, text = '') {
   return call('answerCallbackQuery', { callback_query_id: callbackQueryId, text });
 }
 
+// Используется, когда карточку помечают "Это агент" — сообщение сразу
+// убирается из группы вместо того, чтобы просто менять бейдж на нём.
+// Возвращает true/false, не бросает исключение — вызывающий код решает,
+// что делать, если удалить не получилось (например, сообщение старше
+// 48 часов и Telegram сам уже не даёт его удалить).
+export async function deleteMessage(chatId, messageId) {
+  const data = await call('deleteMessage', { chat_id: chatId, message_id: messageId });
+  return !!data.ok;
+}
+
 export function escapeHtml(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')

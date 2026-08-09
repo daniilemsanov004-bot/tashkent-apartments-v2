@@ -7,6 +7,7 @@ import { notifyAlert, notifyToTopicGroup } from './telegram.js';
 import { isKnown, saveListing, markNotified } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
+import { cleanAgentBacklog } from './cleanAgentMessages.js';
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 
@@ -350,6 +351,24 @@ async function main() {
     await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType);
   }
   console.log('Проверка завершена.');
+
+  // Автоматическая чистка по расписанию: раз в 15 минут, вместе со
+  // скрапингом. Удаляет только то, у чего уже есть сохранённый
+  // telegram_chat_id/telegram_message_id (новые объявления, помеченные
+  // агентом в этом же прогоне выше, или вручную кнопкой "Это агент" в
+  // Telegram). Старый мусор без сохранённого id сюда не попадает — для
+  // него нужен разовый backfill-from-telegram-export.js.
+  try {
+    console.log('Автоочистка агентских сообщений...');
+    const { totalCandidates, deleted, failed } = await cleanAgentBacklog({ quiet: true });
+    if (totalCandidates > 0) {
+      console.log(`Автоочистка: удалено ${deleted}, не удалось ${failed} (из ${totalCandidates} кандидатов).`);
+    } else {
+      console.log('Автоочистка: чистить нечего.');
+    }
+  } catch (err) {
+    console.error('Автоочистка агентских сообщений: ошибка:', err.message);
+  }
 }
 
 main().catch((err) => {

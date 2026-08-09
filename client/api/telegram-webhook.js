@@ -28,10 +28,11 @@
 // короткий мастер из кнопок.
 
 import { supabase } from './_supabase.js';
-import { sendMessage, editMessageText, answerCallbackQuery, escapeHtml } from './_telegramApi.js';
+import { sendMessage, editMessageText, answerCallbackQuery, escapeHtml, deleteMessage } from './_telegramApi.js';
 import { DISTRICTS, districtSlug, districtFromSlug } from './_districts.js';
 import { parsePriceRange } from './_priceParser.js';
 import { buildListingText, buildListingButtons } from './_listingMessage.js';
+import { cleanAgentMessagesBatch } from './_cleanAgents.js';
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 11990;
@@ -175,10 +176,38 @@ async function toggleFlaggedAgent(chatId, messageId, listingId, agentName, callb
   const next = !current?.flagged_agent;
   await supabase
     .from('listings')
-    .update({ flagged_agent: next, flagged_by: next ? agentName : null, flagged_at: next ? new Date().toISOString() : null })
+    .update({
+      flagged_agent: next,
+      flagged_by: next ? agentName : null,
+      flagged_at: next ? new Date().toISOString() : null,
+      label_kind: next ? 'agent' : current?.label_kind, // синхронизируем с label_kind, чтобы recheck-owners.js/delete-agent-messages.js тоже видели это как агента
+    })
     .eq('id', listingId);
+
+  if (next) {
+    // Раньше тут просто обновлялась карточка (бейдж "Похоже на
+    // агентство") — сообщение оставалось висеть в чате и дальше
+    // мешало. По просьбе пользователя: если кто-то в группе пометил
+    // объявление как агента, сообщение сразу убирается из чата, а не
+    // просто перекрашивается. Снятие пометки (next === false) ничего
+    // не восстанавливает — Telegram не даёт "отменить" удаление,
+    // сообщение всё равно уже отправлено один раз в прошлом.
+    const deleted = await deleteMessage(chatId, messageId);
+    if (deleted) {
+      await supabase.from('listings').update({ telegram_deleted: true }).eq('id', listingId);
+      await answerCallbackQuery(callbackId, '🚫 Отмечено как агентство — сообщение удалено');
+      return;
+    }
+    // Не удалилось (например, сообщению больше 48 часов — Telegram
+    // сам такое запрещает удалять ботам) — хотя бы обновляем карточку,
+    // как раньше, чтобы было видно пометку.
+    await refreshListingMessage(chatId, messageId, listingId);
+    await answerCallbackQuery(callbackId, '🚫 Отмечено как агентство (удалить сообщение не удалось — попробуйте вручную)');
+    return;
+  }
+
   await refreshListingMessage(chatId, messageId, listingId);
-  await answerCallbackQuery(callbackId, next ? '🚫 Отмечено как агентство' : 'Пометка снята');
+  await answerCallbackQuery(callbackId, 'Пометка снята');
 }
 
 // Заметки не пишутся мастером/кнопками (Telegram не даёт открыть
@@ -499,10 +528,30 @@ function commandName(message) {
   return message.text.slice(0, entity.length).split('@')[0]; // срезаем @имя_бота, если есть
 }
 
+async function handleClean(chatId) {
+  await sendMessage(chatId, '🧹 Чищу агентские посты...');
+  try {
+    const result = await cleanAgentMessagesBatch(25);
+    let text = `Готово: удалено ${result.deleted}`;
+    if (result.failed) text += `, не удалось ${result.failed}`;
+    text += '.';
+    if (result.hasMore) text += '\n\nЕщё остались — наберите /clean ещё раз.';
+    if (result.processed === 0) text = 'Чистить нечего — новых агентских постов не найдено.';
+    await sendMessage(chatId, text);
+  } catch (err) {
+    console.error('Ошибка команды /clean:', err);
+    await sendMessage(chatId, `⚠️ Не получилось: ${err.message}`);
+  }
+}
+
 async function handleMessage(message) {
   if (await tryHandleNoteReply(message)) return;
 
   const cmd = commandName(message);
+  if (cmd === '/clean') {
+    await handleClean(message.chat.id);
+    return;
+  }
   if (cmd === '/start' || cmd === '/find') {
     if (!FIND_WIZARD_ENABLED) {
       await sendMessage(

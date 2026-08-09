@@ -384,6 +384,29 @@ function Dashboard() {
     });
   }, [authFetch]);
 
+  const [cleaningAgents, setCleaningAgents] = useState(false);
+
+  const cleanAgents = useCallback(async () => {
+    setCleaningAgents(true);
+    let totalDeleted = 0;
+    let totalFailed = 0;
+    let hasMore = true;
+    try {
+      while (hasMore) {
+        const res = await authFetch('/api/clean-agents', { method: 'POST' });
+        if (!res?.ok) break;
+        const data = await res.json();
+        totalDeleted += data.deleted;
+        totalFailed += data.failed;
+        hasMore = data.hasMore;
+        setStatusText(`Чищу агентские посты... удалено ${totalDeleted}`);
+      }
+      setStatusText(`Готово: удалено ${totalDeleted}${totalFailed ? `, не удалось ${totalFailed}` : ''}`);
+    } finally {
+      setCleaningAgents(false);
+    }
+  }, [authFetch]);
+
   const clearAll = useCallback(async () => {
     const confirmed = window.confirm(
       'Удалить все объявления из базы? Это нельзя отменить. При следующей проверке сегодняшние объявления придут заново.'
@@ -513,6 +536,9 @@ function Dashboard() {
           {filtersActive && (
             <button className="btn" onClick={resetFilters}>Сбросить фильтры</button>
           )}
+          <button className="btn" onClick={cleanAgents} disabled={cleaningAgents}>
+            {cleaningAgents ? 'Чищу...' : '🧹 Почистить агентские посты'}
+          </button>
           <button className="btn btn-danger" onClick={clearAll}>Очистить базу</button>
         </div>
 

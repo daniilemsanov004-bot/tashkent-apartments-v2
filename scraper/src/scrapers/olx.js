@@ -294,6 +294,10 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   const asideCard = $('[data-testid="aside"]');
   let sellerCardName = '';
   let sellerAvatarAlt = '';
+  let sellerListingsUrl = null; // ⚠️ была случайно потеряна при одной из правок — из-за
+  // этого fetchOlxDetails падал с ReferenceError на КАЖДОМ объявлении
+  // (строгий режим ES-модулей не прощает присваивание необъявленной
+  // переменной), и весь блок детекции агента вообще не выполнялся.
   if (asideCard.length) {
     const asideLink = asideCard.find('a[href*=".olx.uz/"]').first();
     const asideHref = asideLink.attr('href');
@@ -303,7 +307,8 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     sellerAvatarAlt = asideCard.find('img').attr('alt') || '';
     sellerCardName = asideLink.text().trim();
   }
-  const AGENT_NAME_HINT_RE = /риэлтор|риелтор|realtor|real\s*estate\s*agent|агентств|\bagency\b|\bagent\b/i;
+  const AGENT_NAME_HINT_RE =
+    /риэлтор|риелтор|realtor|\brealty\b|real\s*estate|недвижимост|агентств|\bagency\b|\bagent\b/i;
   const sellerNameLooksLikeAgent = AGENT_NAME_HINT_RE.test(`${sellerCardName} ${sellerAvatarAlt}`);
 
   // Ссылка на профиль продавца — запасной путь (карусель "Все

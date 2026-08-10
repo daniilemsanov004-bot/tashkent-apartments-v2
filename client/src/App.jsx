@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, memo } from 'react';
 import { supabase, supabaseConfigMissing } from './lib/supabaseClient.js';
 
-const REFRESH_MS = 15000;
+const REFRESH_MS = 20000;
+const PAGE_SIZE = 30;
+const SEARCH_DEBOUNCE_MS = 350;
 
 function timeAgo(iso) {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -16,9 +18,9 @@ function timeAgo(iso) {
 
 function badgeFor(listing) {
   if (listing.label_kind === 'owner') return { cls: 'badge-owner', text: '✓ Собственник' };
-  if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: `🙂 ${listing.label_text || 'Собственник'}` };
-  if (listing.label_kind === 'agent') return { cls: 'badge-agent', text: `🏢 ${listing.label_text || 'Агентство'}` };
-  return { cls: 'badge-unsure', text: '? Сомнительно' };
+  if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: `${listing.label_text || 'Собственник'}` };
+  if (listing.label_kind === 'agent') return { cls: 'badge-agent', text: `${listing.label_text || 'Агентство'}` };
+  return { cls: 'badge-unsure', text: 'Сомнительно' };
 }
 
 function dealTag(dealType) {
@@ -28,15 +30,16 @@ function dealTag(dealType) {
 }
 
 function propertyTypeLabel(propertyType) {
-  if (propertyType === 'house') return '🏡 Дом';
-  if (propertyType === 'commercial') return '🏢 Коммерция';
-  return '🏠 Квартира';
+  if (propertyType === 'house') return 'Дом';
+  if (propertyType === 'commercial') return 'Коммерция';
+  return 'Квартира';
 }
 
-function Card({ listing, onToggleContacted }) {
+const Card = memo(function Card({ listing, onToggleContacted }) {
   const badge = badgeFor(listing);
+  const isOwner = listing.label_kind === 'owner';
   return (
-    <div className={`card ${listing.contacted ? 'is-contacted' : ''}`}>
+    <div className={`card ${listing.contacted ? 'is-contacted' : ''} ${isOwner ? 'is-owner' : ''}`}>
       <div className="card-top">
         <div>
           <p className="card-title">
@@ -47,8 +50,8 @@ function Card({ listing, onToggleContacted }) {
             <span className="source-tag">{propertyTypeLabel(listing.property_type)}</span>
             <span className="source-tag">{listing.source}</span>
             &nbsp;·&nbsp;{timeAgo(listing.created_at)}
-            {listing.district ? ` · 📍 ${listing.district}` : ''}
-            {listing.assigned_to ? ` · 👤 Взял: ${listing.assigned_to}` : ''}
+            {listing.district ? ` · ${listing.district}` : ''}
+            {listing.assigned_to ? ` · Взял: ${listing.assigned_to}` : ''}
           </p>
         </div>
         <span className={`badge ${badge.cls}`}>{badge.text}</span>
@@ -71,6 +74,16 @@ function Card({ listing, onToggleContacted }) {
           <a className="btn btn-primary" href={listing.url} target="_blank" rel="noreferrer">Открыть</a>
         </div>
       </div>
+    </div>
+  );
+});
+
+function CardSkeleton() {
+  return (
+    <div className="card card-skeleton">
+      <div className="skel-line skel-title" />
+      <div className="skel-line skel-meta" />
+      <div className="skel-line skel-bottom" />
     </div>
   );
 }
@@ -165,8 +178,6 @@ function TeamPanel({ authFetch, myEmail: myEmailRaw, onClose }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Я — владелец? Только владелец видит элементы управления
-  // (приглашение, смена роли, удаление); список видят все.
   const myRole = members.find((m) => m.email === myEmail)?.role;
   const iAmOwner = myRole === 'owner';
   const ownerCount = members.filter((m) => m.role === 'owner').length;
@@ -317,13 +328,20 @@ export default function App() {
 }
 
 function Dashboard() {
-  const [session, setSession] = useState(undefined); // undefined = ещё проверяем
-  const [authorized, setAuthorized] = useState(null); // null = не проверено, true/false после первого запроса
+  const [session, setSession] = useState(undefined);
+  const [authorized, setAuthorized] = useState(null);
   const [showTeam, setShowTeam] = useState(false);
 
-  const [listings, setListings] = useState([]);
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [statusText, setStatusText] = useState('Загрузка…');
-  const [search, setSearch] = useState('');
+  const [stats, setStats] = useState({ total: 0, today: 0, owners: 0, notContacted: 0 });
+
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState(''); // debounced
   const [dealFilter, setDealFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [badgeFilter, setBadgeFilter] = useState('all');
@@ -335,6 +353,13 @@ function Dashboard() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  // Поиск — с задержкой: без неё каждая буква гоняла бы отдельный
+  // запрос к базе, а лента дёргалась бы на каждое нажатие клавиши.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
   const authFetch = useCallback(
     async (url, options = {}) => {
@@ -356,27 +381,107 @@ function Dashboard() {
     [session]
   );
 
-  const fetchListings = useCallback(async () => {
-    const res = await authFetch(`/api/listings?days=${daysRange}`);
+  const buildListingsUrl = useCallback((pageToLoad) => {
+    const params = new URLSearchParams({
+      days: daysRange,
+      page: String(pageToLoad),
+      pageSize: String(PAGE_SIZE),
+    });
+    if (search) params.set('q', search);
+    if (dealFilter !== 'all') params.set('deal', dealFilter);
+    if (typeFilter !== 'all') params.set('type', typeFilter);
+    if (badgeFilter !== 'all') params.set('badge', badgeFilter);
+    if (contactedFilter !== 'all') {
+      params.set('contacted', contactedFilter === 'contacted' ? 'yes' : 'no');
+    }
+    return `/api/listings?${params.toString()}`;
+  }, [daysRange, search, dealFilter, typeFilter, badgeFilter, contactedFilter]);
+
+  const fetchStats = useCallback(async () => {
+    const res = await authFetch(`/api/stats?days=${daysRange}`);
     if (!res) return;
     try {
-      const data = await res.json();
-      setListings(data);
-      setStatusText('Обновлено ' + new Date().toLocaleTimeString('ru-RU'));
-    } catch (err) {
-      setStatusText('Не удалось связаться с сервером');
+      setStats(await res.json());
+    } catch {
+      // тихо игнорируем — статистика не критична для работы ленты
     }
   }, [authFetch, daysRange]);
 
+  // Загрузка "с нуля" — когда меняются фильтры/поиск/диапазон дат.
+  // requestId защищает от гонки: если пользователь быстро переключает
+  // фильтры, более старый ответ, пришедший позже нового, игнорируется.
+  const requestIdRef = useRef(0);
   useEffect(() => {
     if (!session) return;
-    fetchListings();
-    const id = setInterval(fetchListings, REFRESH_MS);
+    const myRequestId = ++requestIdRef.current;
+    setLoadingInitial(true);
+    setPage(0);
+    authFetch(buildListingsUrl(0)).then(async (res) => {
+      if (!res || myRequestId !== requestIdRef.current) return;
+      try {
+        const data = await res.json();
+        setItems(data.items);
+        setHasMore(data.hasMore);
+        setStatusText('Обновлено ' + new Date().toLocaleTimeString('ru-RU'));
+      } catch {
+        setStatusText('Не удалось связаться с сервером');
+      } finally {
+        setLoadingInitial(false);
+      }
+    });
+    fetchStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, buildListingsUrl]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const res = await authFetch(buildListingsUrl(nextPage));
+    if (res) {
+      try {
+        const data = await res.json();
+        setItems((prev) => {
+          const seen = new Set(prev.map((l) => l.id));
+          return [...prev, ...data.items.filter((l) => !seen.has(l.id))];
+        });
+        setHasMore(data.hasMore);
+        setPage(nextPage);
+      } catch {
+        // страница подгрузки не критична — просто не увеличиваем page, кнопка останется доступной
+      }
+    }
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, page, authFetch, buildListingsUrl]);
+
+  // Автообновление раз в 20 сек: подтягиваем только САМУЮ первую
+  // страницу и добавляем в начало ленты то, чего там ещё не было —
+  // а не перекачиваем и не перерисовываем всё заново (раньше именно
+  // это и было причиной подтормаживаний при большой базе).
+  useEffect(() => {
+    if (!session) return;
+    const id = setInterval(async () => {
+      const res = await authFetch(buildListingsUrl(0));
+      if (!res) return;
+      try {
+        const data = await res.json();
+        setItems((prev) => {
+          const seen = new Set(prev.map((l) => l.id));
+          const fresh = data.items.filter((l) => !seen.has(l.id));
+          if (fresh.length === 0) return prev;
+          return [...fresh, ...prev];
+        });
+        setStatusText('Обновлено ' + new Date().toLocaleTimeString('ru-RU'));
+      } catch {
+        // тихо пропускаем один цикл автообновления — не критично
+      }
+      fetchStats();
+    }, REFRESH_MS);
     return () => clearInterval(id);
-  }, [session, fetchListings]);
+  }, [session, authFetch, buildListingsUrl, fetchStats]);
 
   const toggleContacted = useCallback(async (id, next) => {
-    setListings((prev) => prev.map((l) => (l.id === id ? { ...l, contacted: next } : l)));
+    setItems((prev) => prev.map((l) => (l.id === id ? { ...l, contacted: next } : l)));
     await authFetch(`/api/contacted`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -390,15 +495,15 @@ function Dashboard() {
     setCleaningAgents(true);
     let totalDeleted = 0;
     let totalFailed = 0;
-    let hasMore = true;
+    let more = true;
     try {
-      while (hasMore) {
+      while (more) {
         const res = await authFetch('/api/clean-agents', { method: 'POST' });
         if (!res?.ok) break;
         const data = await res.json();
         totalDeleted += data.deleted;
         totalFailed += data.failed;
-        hasMore = data.hasMore;
+        more = data.hasMore;
         setStatusText(`Чищу агентские посты... удалено ${totalDeleted}`);
       }
       setStatusText(`Готово: удалено ${totalDeleted}${totalFailed ? `, не удалось ${totalFailed}` : ''}`);
@@ -413,10 +518,15 @@ function Dashboard() {
     );
     if (!confirmed) return;
     const res = await authFetch('/api/clear', { method: 'POST' });
-    if (res?.ok) setListings([]);
-  }, [authFetch]);
+    if (res?.ok) {
+      setItems([]);
+      setHasMore(false);
+      fetchStats();
+    }
+  }, [authFetch, fetchStats]);
 
   const resetFilters = useCallback(() => {
+    setSearchInput('');
     setSearch('');
     setDealFilter('all');
     setTypeFilter('all');
@@ -424,37 +534,8 @@ function Dashboard() {
     setContactedFilter('all');
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return listings.filter((l) => {
-      if (q) {
-        const haystack = `${l.title} ${l.district || ''} ${l.raw_text || ''}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      if (badgeFilter === 'owner' && l.label_kind !== 'owner') return false;
-      if (badgeFilter === 'unsure' && l.label_kind !== 'uncertain') return false;
-      if (dealFilter !== 'all' && l.deal_type !== dealFilter) return false;
-      if (typeFilter !== 'all' && (l.property_type || 'apartment') !== typeFilter) return false;
-      if (contactedFilter === 'contacted' && !l.contacted) return false;
-      if (contactedFilter === 'not-contacted' && l.contacted) return false;
-      return true;
-    });
-  }, [listings, search, dealFilter, typeFilter, badgeFilter, contactedFilter]);
-
   const filtersActive =
     search || dealFilter !== 'all' || typeFilter !== 'all' || badgeFilter !== 'all' || contactedFilter !== 'all';
-
-  const stats = useMemo(() => {
-    const total = listings.length;
-    const owners = listings.filter((l) => l.label_kind === 'owner').length;
-    const notContacted = listings.filter((l) => !l.contacted).length;
-    const today = listings.filter((l) => {
-      const d = new Date(l.created_at);
-      const now = new Date();
-      return d.toDateString() === now.toDateString();
-    }).length;
-    return { total, owners, notContacted, today };
-  }, [listings]);
 
   // ---- Экраны в зависимости от состояния авторизации ----
 
@@ -478,7 +559,7 @@ function Dashboard() {
             <p className="subtitle">Аренда и продажа · OLX.uz + Uybor.uz</p>
           </div>
           <div className="header-actions">
-            <button className="btn" onClick={() => setShowTeam(true)}>👥 Команда</button>
+            <button className="btn" onClick={() => setShowTeam(true)}>Команда</button>
             <button className="btn" onClick={() => supabase.auth.signOut()}>Выйти</button>
           </div>
         </div>
@@ -496,7 +577,7 @@ function Dashboard() {
         <div className="stats">
           <div className="stat"><div className="num">{stats.total}</div><div className="label">Всего в базе</div></div>
           <div className="stat"><div className="num">{stats.today}</div><div className="label">Сегодня</div></div>
-          <div className="stat"><div className="num">{stats.owners}</div><div className="label">Собственники</div></div>
+          <div className="stat stat-owner"><div className="num">{stats.owners}</div><div className="label">Собственники</div></div>
           <div className="stat"><div className="num">{stats.notContacted}</div><div className="label">Ещё не связались</div></div>
         </div>
 
@@ -504,8 +585,8 @@ function Dashboard() {
           <input
             type="text"
             placeholder="Поиск по тексту, району…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
           />
           <select value={dealFilter} onChange={(e) => setDealFilter(e.target.value)}>
             <option value="all">Аренда и продажа</option>
@@ -537,27 +618,37 @@ function Dashboard() {
             <button className="btn" onClick={resetFilters}>Сбросить фильтры</button>
           )}
           <button className="btn" onClick={cleanAgents} disabled={cleaningAgents}>
-            {cleaningAgents ? 'Чищу...' : '🧹 Почистить агентские посты'}
+            {cleaningAgents ? 'Чищу...' : 'Почистить агентские посты'}
           </button>
           <button className="btn btn-danger" onClick={clearAll}>Очистить базу</button>
         </div>
 
-        <p className="results-count">Показано: {filtered.length} из {listings.length}</p>
+        <p className="results-count">
+          Показано: {items.length}{hasMore ? '+' : ''} из {stats.total}
+        </p>
 
         <div className="feed">
-          {filtered.length === 0 ? (
+          {loadingInitial ? (
+            Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
+          ) : items.length === 0 ? (
             <div className="empty">
               <div className="big">Пока пусто</div>
-              {listings.length === 0
-                ? 'Объявления появятся здесь, как только сервер найдёт новые'
-                : 'Ничего не подходит под текущие фильтры'}
+              {filtersActive
+                ? 'Ничего не подходит под текущие фильтры'
+                : 'Объявления появятся здесь, как только сервер найдёт новые'}
             </div>
           ) : (
-            filtered.map((l) => (
+            items.map((l) => (
               <Card key={l.id} listing={l} onToggleContacted={toggleContacted} />
             ))
           )}
         </div>
+
+        {!loadingInitial && hasMore && (
+          <button className="btn btn-loadmore" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Загружаю…' : 'Показать ещё'}
+          </button>
+        )}
       </main>
     </>
   );

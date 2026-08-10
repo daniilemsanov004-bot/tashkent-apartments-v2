@@ -2,6 +2,21 @@ import { supabase } from './_supabase.js';
 import { requireAuth } from './_auth.js';
 import { sortByPriority } from './_priority.js';
 
+// Раньше этот эндпоинт возвращал ВСЕ подходящие объявления одним
+// массивом (сначала лимит 1000 от Supabase, потом .range(0,4999),
+// потом честную выгрузку без потолка вообще) — и фильтровал/сортировал
+// фронтенд уже после того, как всё это прилетело браузеру. При тысячах
+// строк это и есть основная причина тормозов: гигантский JSON каждые
+// 15 секунд + рендер тысяч карточек в DOM разом.
+//
+// Теперь: постраничная выдача (page/pageSize), и все фильтры (поиск,
+// тип сделки, тип недвижимости, статус продавца, связались/нет)
+// применяются В САМОМ запросе к Supabase — база отдаёт уже готовый
+// кусок, а не всё подряд.
+
+const PAGE_SIZE_DEFAULT = 30;
+const PAGE_SIZE_MAX = 100;
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'method not allowed' });
@@ -9,52 +24,63 @@ export default async function handler(req, res) {
   }
 
   const email = await requireAuth(req, res);
-  if (!email) return; // requireAuth уже отправил 401
+  if (!email) return;
 
-  // По умолчанию показываем только последние N дней (3) — иначе база
-  // со временем упрётся в лимит Supabase на 1000 строк за запрос, да
-  // и сама лента станет неюзабельной от старья. Можно расширить через
-  // ?days=7, или ?days=all для полной истории.
   const daysParam = req.query.days;
   const days = daysParam === 'all' ? null : Number(daysParam) || 3;
+  const page = Math.max(0, Number(req.query.page) || 0);
+  const pageSize = Math.min(PAGE_SIZE_MAX, Math.max(1, Number(req.query.pageSize) || PAGE_SIZE_DEFAULT));
+  const q = (req.query.q || '').trim();
 
-  function buildQuery() {
-    let query = supabase.from('listings').select('*').order('created_at', { ascending: false });
-    if (days !== null) {
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-      query = query.gte('created_at', cutoff);
-    }
-    // Агентства (подтверждённые жёсткими правилами — много объявлений
-    // у продавца / аккаунт-организация) снова скрываем полностью — и с
-    // сайта, и (см. scraper/run.js) из Telegram. Раньше пробовали
-    // показывать всех с приоритетом собственников сверху, но по
-    // ощущениям агентских объявлений становится слишком много и они
-    // мешают — вернули как было. ?showAgents=true — для отладки.
-    if (req.query.showAgents !== 'true') {
-      query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
-    }
-    return query;
+  let query = supabase.from('listings').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+
+  if (days !== null) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    query = query.gte('created_at', cutoff);
   }
 
-  // Supabase режет любой одиночный запрос лимитом в 1000 строк —
-  // раньше это обходили через .range(0, 4999), но это само по себе
-  // потолок в 5000: при days=all база уже переросла его, и лента
-  // молча обрезалась ("Показано: 5000 из 5000"). Вместо этого тянем
-  // страницами по 1000, пока не придёт страница короче полной — так
-  // никакого верхнего предела больше нет вообще.
-  const PAGE_SIZE = 1000;
-  let data = [];
-  let offset = 0;
-  for (;;) {
-    const { data: page, error } = await buildQuery().range(offset, offset + PAGE_SIZE - 1);
-    if (error) {
-      res.status(500).json({ error: error.message });
-      return;
-    }
-    data = data.concat(page);
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+  // Агентства снова скрываем полностью, как и раньше. ?showAgents=true — для отладки.
+  if (req.query.showAgents !== 'true') {
+    query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
   }
 
-  res.status(200).json(sortByPriority(data));
+  if (q) {
+    // ilike требует экранировать % и _ (спецсимволы SQL LIKE), иначе
+    // поиск с этими символами в тексте будет вести себя странно
+    const escaped = q.replace(/[%_]/g, (m) => `\\${m}`);
+    query = query.or(`title.ilike.%${escaped}%,district.ilike.%${escaped}%,raw_text.ilike.%${escaped}%`);
+  }
+
+  if (req.query.deal === 'rent' || req.query.deal === 'sale') {
+    query = query.eq('deal_type', req.query.deal);
+  }
+  if (req.query.type && req.query.type !== 'all') {
+    query = query.eq('property_type', req.query.type);
+  }
+  if (req.query.badge === 'owner') {
+    query = query.eq('label_kind', 'owner');
+  } else if (req.query.badge === 'unsure') {
+    query = query.eq('label_kind', 'uncertain');
+  }
+  if (req.query.contacted === 'yes') {
+    query = query.eq('contacted', true);
+  } else if (req.query.contacted === 'no') {
+    query = query.neq('contacted', true);
+  }
+
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+  const { data, error, count } = await query.range(from, to);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const total = count ?? data.length;
+  res.status(200).json({
+    items: sortByPriority(data), // сортировка "собственники сверху" — только внутри этой страницы
+    total,
+    hasMore: from + data.length < total,
+  });
 }

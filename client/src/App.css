@@ -1,41 +1,40 @@
 :root {
   /* =========================================================
-     URBANKEY
-     Black / Gold / Warm White
+     URBANKEY — DARK / WARM / GOLD
      ========================================================= */
 
-  --bg: #080808;
-  --bg-2: #0d0d0d;
+  --bg: #141414;
+  --bg-2: #181818;
 
-  --surface: #111111;
-  --surface-2: #171717;
-  --surface-3: #1c1c1c;
+  --surface: #202020;
+  --surface-2: #272727;
+  --surface-3: #2d2d2d;
 
-  --border: #272727;
-  --border-soft: #1c1c1c;
-  --border-gold: rgba(198, 161, 74, 0.45);
+  --border: #383838;
+  --border-soft: #2d2d2d;
+  --border-hover: #484848;
 
-  --text: #f4f1e8;
-  --text-dim: #a8a49a;
-  --text-faint: #6f6c65;
+  --text: #f3f0e8;
+  --text-dim: #aaa69c;
+  --text-faint: #77736a;
 
-  --gold: #c6a14a;
-  --gold-bright: #dfbd65;
-  --gold-dark: #8f702d;
+  --gold: #c7a15a;
+  --gold-bright: #dfbb70;
+  --gold-dark: #927333;
 
-  --gold-wash: rgba(198, 161, 74, 0.10);
-  --gold-wash-strong: rgba(198, 161, 74, 0.16);
+  --gold-wash: rgba(199, 161, 90, 0.12);
+  --gold-wash-strong: rgba(199, 161, 90, 0.18);
 
-  --owner: #78a982;
-  --owner-wash: rgba(120, 169, 130, 0.10);
+  --owner: #7eaa85;
+  --owner-wash: rgba(126, 170, 133, 0.12);
 
-  --danger: #c45f55;
-  --danger-wash: rgba(196, 95, 85, 0.10);
+  --danger: #c76a5e;
+  --danger-wash: rgba(199, 106, 94, 0.12);
 
-  --radius: 8px;
-  --radius-lg: 12px;
+  --radius: 10px;
+  --radius-small: 7px;
 
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  --shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
 }
 
 
@@ -59,9 +58,10 @@ html {
 
 body {
   margin: 0;
+
   background:
-    radial-gradient(900px 500px at 50% -180px,
-      rgba(198, 161, 74, 0.075),
+    radial-gradient(1000px 500px at 50% -250px,
+      rgba(199, 161, 90, 0.07),
       transparent 70%),
     var(--bg);
 
@@ -74,13 +74,16 @@ body {
     "Segoe UI",
     sans-serif;
 
+  font-size: 14px;
+
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -95,16 +98,18 @@ a {
    ========================================================= */
 
 header {
-  max-width: 1120px;
+  max-width: 1100px;
+
   margin: 0 auto;
 
-  padding: 42px 28px 26px;
+  padding: 38px 28px 25px;
 
   border-bottom: 1px solid var(--border-soft);
 }
 
 .header-top {
   display: flex;
+
   justify-content: space-between;
   align-items: flex-start;
 
@@ -113,24 +118,27 @@ header {
 
 .eyebrow {
   display: flex;
+
   align-items: center;
+
   gap: 9px;
 
-  margin-bottom: 11px;
+  margin-bottom: 10px;
 
   color: var(--gold);
 
   font-size: 10px;
   font-weight: 700;
 
-  letter-spacing: 0.18em;
+  letter-spacing: 0.17em;
+
   text-transform: uppercase;
 }
 
 .eyebrow::before {
   content: "";
 
-  width: 22px;
+  width: 24px;
   height: 1px;
 
   background: var(--gold);
@@ -141,40 +149,38 @@ h1 {
 
   color: var(--text);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 34px;
+  line-height: 1.12;
 
-  font-size: 38px;
-  line-height: 1.08;
-  font-weight: 500;
+  font-weight: 650;
 
-  letter-spacing: -0.025em;
+  letter-spacing: -0.035em;
 }
 
 .subtitle {
-  margin: 0;
+  max-width: 700px;
 
-  max-width: 650px;
+  margin: 0;
 
   color: var(--text-dim);
 
-  font-size: 14px;
+  font-size: 13.5px;
+
   line-height: 1.55;
 }
 
 .status-bar {
   display: flex;
+
   align-items: center;
+
   gap: 9px;
 
-  margin-top: 18px;
+  margin-top: 17px;
 
   color: var(--text-faint);
 
   font-size: 11px;
-  letter-spacing: 0.02em;
 }
 
 .dot {
@@ -187,7 +193,7 @@ h1 {
 
   box-shadow:
     0 0 0 3px var(--gold-wash),
-    0 0 12px rgba(198, 161, 74, 0.18);
+    0 0 10px rgba(199, 161, 90, 0.18);
 }
 
 
@@ -197,10 +203,12 @@ h1 {
 
 .header-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
 
-  margin-top: 3px;
+  align-items: center;
+
+  gap: 7px;
+
+  margin-top: 2px;
 }
 
 
@@ -209,11 +217,11 @@ h1 {
    ========================================================= */
 
 main {
-  max-width: 1120px;
+  max-width: 1100px;
 
   margin: 0 auto;
 
-  padding: 0 28px 80px;
+  padding: 0 28px 70px;
 }
 
 
@@ -223,28 +231,32 @@ main {
 
 .toolbar {
   position: sticky;
+
   top: 0;
 
   z-index: 10;
 
   display: flex;
+
   align-items: center;
+
   gap: 8px;
+
   flex-wrap: wrap;
 
   margin-bottom: 22px;
 
-  padding: 16px 0 13px;
+  padding: 15px 0 13px;
 
   background:
     linear-gradient(to bottom,
-      rgba(8, 8, 8, 0.98),
-      rgba(8, 8, 8, 0.94));
+      rgba(20, 20, 20, 0.98),
+      rgba(20, 20, 20, 0.94));
 
   border-bottom: 1px solid var(--border-soft);
 
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 
@@ -261,7 +273,8 @@ select {
   background: var(--surface);
 
   border: 1px solid var(--border);
-  border-radius: 7px;
+
+  border-radius: var(--radius-small);
 
   padding: 0 12px;
 
@@ -277,6 +290,7 @@ select {
 
 input[type="text"] {
   flex: 1;
+
   min-width: 220px;
 }
 
@@ -286,17 +300,21 @@ input::placeholder {
 
 input:hover,
 select:hover {
-  border-color: #353535;
+  background: var(--surface-2);
+
+  border-color: var(--border-hover);
 }
 
 input:focus,
 select:focus {
   outline: none;
 
+  background: var(--surface-2);
+
   border-color: var(--gold);
 
   box-shadow:
-    0 0 0 3px rgba(198, 161, 74, 0.07);
+    0 0 0 3px rgba(199, 161, 90, 0.07);
 }
 
 select {
@@ -305,7 +323,7 @@ select {
 
 
 /* =========================================================
-   PRICE INPUT
+   PRICE
    ========================================================= */
 
 .price-input {
@@ -343,15 +361,20 @@ select {
   background: var(--surface);
 
   border: 1px solid var(--border);
+
   border-radius: var(--radius);
 
   transition:
-    border-color 0.2s ease,
-    transform 0.2s ease;
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
 }
 
 .stat:hover {
-  border-color: #343434;
+  background: var(--surface-2);
+
+  border-color: var(--border-hover);
+
   transform: translateY(-1px);
 }
 
@@ -384,8 +407,8 @@ select {
 
   background:
     linear-gradient(90deg,
-      rgba(198, 161, 74, 0.55),
-      transparent 70%);
+      rgba(199, 161, 90, 0.5),
+      transparent 75%);
 }
 
 .stat.stat-owner::before {
@@ -395,28 +418,26 @@ select {
 .stat.stat-owner::after {
   background:
     linear-gradient(90deg,
-      rgba(120, 169, 130, 0.5),
-      transparent 70%);
+      rgba(126, 170, 133, 0.5),
+      transparent 75%);
 }
 
 .stat .num {
   display: block;
 
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 
   color: var(--text);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 26px;
 
-  font-size: 27px;
   line-height: 1;
 
-  font-weight: 500;
+  font-weight: 650;
 
   font-variant-numeric: tabular-nums;
+
+  letter-spacing: -0.03em;
 }
 
 .stat.stat-owner .num {
@@ -427,15 +448,17 @@ select {
   color: var(--text-faint);
 
   font-size: 10px;
-  font-weight: 600;
+
+  font-weight: 650;
 
   letter-spacing: 0.08em;
+
   text-transform: uppercase;
 }
 
 
 /* =========================================================
-   RESULTS COUNT
+   RESULTS
    ========================================================= */
 
 .results-count {
@@ -444,9 +467,11 @@ select {
   color: var(--text-faint);
 
   font-size: 10px;
-  font-weight: 600;
+
+  font-weight: 650;
 
   letter-spacing: 0.11em;
+
   text-transform: uppercase;
 }
 
@@ -457,18 +482,22 @@ select {
 
 .bulk-bar {
   display: flex;
+
   align-items: center;
+
   gap: 10px;
+
   flex-wrap: wrap;
 
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 
   padding: 10px 13px;
 
   background: var(--gold-wash);
 
-  border: 1px solid var(--border-gold);
-  border-radius: 7px;
+  border: 1px solid rgba(199, 161, 90, 0.28);
+
+  border-radius: var(--radius-small);
 
   color: var(--gold-bright);
 
@@ -482,7 +511,9 @@ select {
 
 .feed {
   display: flex;
+
   flex-direction: column;
+
   gap: 8px;
 }
 
@@ -499,6 +530,7 @@ select {
   background: var(--surface);
 
   border: 1px solid var(--border);
+
   border-left: 2px solid var(--border);
 
   border-radius: var(--radius);
@@ -511,14 +543,21 @@ select {
 }
 
 .card:hover {
-  border-color: #343434;
-  background: #131313;
+  background: #242424;
+
+  border-color: var(--border-hover);
+
+  transform: translateY(-1px);
 }
 
 .card.is-selected {
-  background: #16140f;
+  background:
+    linear-gradient(90deg,
+      rgba(199, 161, 90, 0.06),
+      transparent 50%),
+    var(--surface-2);
 
-  border-color: var(--border-gold);
+  border-color: rgba(199, 161, 90, 0.45);
 }
 
 .card.is-owner {
@@ -534,7 +573,7 @@ select {
 
   align-items: flex-start;
 
-  gap: 13px;
+  gap: 12px;
 }
 
 .card-select {
@@ -558,17 +597,21 @@ select {
 
 
 /* =========================================================
-   CARD TITLE
+   CARD TEXT
    ========================================================= */
 
 .card-title {
   margin: 0 0 5px;
 
+  color: var(--text);
+
   font-size: 14px;
+
   line-height: 1.45;
+
   font-weight: 600;
 
-  letter-spacing: -0.005em;
+  letter-spacing: -0.008em;
 }
 
 .card-title a {
@@ -589,12 +632,13 @@ select {
   color: var(--text-dim);
 
   font-size: 12px;
+
   line-height: 1.5;
 }
 
 
 /* =========================================================
-   NOTES
+   NOTE
    ========================================================= */
 
 .note-line {
@@ -611,6 +655,7 @@ select {
   background: var(--gold-wash);
 
   border: 1px solid transparent;
+
   border-radius: 5px;
 
   color: var(--gold-bright);
@@ -620,6 +665,7 @@ select {
   cursor: pointer;
 
   text-overflow: ellipsis;
+
   white-space: nowrap;
 
   transition:
@@ -630,20 +676,22 @@ select {
 .note-line:hover {
   background: var(--gold-wash-strong);
 
-  border-color: rgba(198, 161, 74, 0.18);
+  border-color: rgba(199, 161, 90, 0.2);
 }
 
 .note-input {
   width: 100%;
+
   max-width: 360px;
 
-  margin-top: 7px;
-
   min-height: 34px;
+
+  margin-top: 7px;
 
   background: var(--surface-2);
 
   border: 1px solid var(--gold);
+
   border-radius: 6px;
 
   padding: 7px 9px;
@@ -665,17 +713,23 @@ select {
 .badge {
   flex-shrink: 0;
 
-  padding: 4px 9px;
+  padding: 5px 9px;
 
-  border: 1px solid transparent;
+  background: var(--surface-2);
+
+  border: 1px solid var(--border);
+
   border-radius: 100px;
 
+  color: var(--text-faint);
+
   font-size: 9px;
+
   line-height: 1;
 
   font-weight: 700;
 
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
 
   text-transform: uppercase;
 
@@ -687,15 +741,15 @@ select {
 
   color: var(--owner);
 
-  border-color: rgba(120, 169, 130, 0.25);
+  border-color: rgba(126, 170, 133, 0.28);
 }
 
 .badge-unsure {
   background: var(--danger-wash);
 
-  color: #d8897e;
+  color: #d98a81;
 
-  border-color: rgba(196, 95, 85, 0.25);
+  border-color: rgba(199, 106, 94, 0.28);
 }
 
 .badge-unchecked {
@@ -711,7 +765,7 @@ select {
 
   color: var(--danger);
 
-  border-color: rgba(196, 95, 85, 0.25);
+  border-color: rgba(199, 106, 94, 0.28);
 }
 
 
@@ -723,11 +777,13 @@ select {
   display: flex;
 
   justify-content: space-between;
+
   align-items: center;
 
   gap: 14px;
 
   margin-top: 14px;
+
   padding-top: 13px;
 
   border-top: 1px solid var(--border-soft);
@@ -736,15 +792,13 @@ select {
 .price {
   color: var(--text);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
-
   font-size: 18px;
+
   line-height: 1;
 
-  font-weight: 600;
+  font-weight: 650;
+
+  letter-spacing: -0.02em;
 }
 
 .card-actions {
@@ -753,32 +807,36 @@ select {
   align-items: center;
 
   gap: 6px;
+
   flex-wrap: wrap;
 }
 
 
 /* =========================================================
-   BUTTONS
+   BUTTON
    ========================================================= */
 
 .btn {
   display: inline-flex;
 
   align-items: center;
+
   justify-content: center;
 
-  min-height: 32px;
+  min-height: 33px;
 
   padding: 0 11px;
 
   background: var(--surface-2);
 
   border: 1px solid var(--border);
+
   border-radius: 6px;
 
   color: var(--text-dim);
 
   font-size: 11.5px;
+
   font-weight: 600;
 
   text-decoration: none;
@@ -789,7 +847,7 @@ select {
     background 0.15s ease,
     border-color 0.15s ease,
     color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.12s ease;
 }
 
 .btn:hover {
@@ -826,7 +884,7 @@ select {
 
   border-color: var(--gold);
 
-  color: #0b0b0b;
+  color: #15120c;
 
   font-weight: 700;
 }
@@ -836,7 +894,7 @@ select {
 
   border-color: var(--gold-bright);
 
-  color: #080808;
+  color: #15120c;
 }
 
 
@@ -847,7 +905,7 @@ select {
 
   border-color: var(--owner);
 
-  color: #09100b;
+  color: #101610;
 }
 
 
@@ -856,7 +914,7 @@ select {
 .btn-danger {
   color: var(--danger);
 
-  border-color: rgba(196, 95, 85, 0.25);
+  border-color: rgba(199, 106, 94, 0.25);
 }
 
 .btn-danger:hover {
@@ -864,7 +922,7 @@ select {
 
   border-color: var(--danger);
 
-  color: #dc8177;
+  color: #db8177;
 }
 
 
@@ -879,9 +937,7 @@ select {
 
   padding: 0 22px;
 
-  border-radius: 6px;
-
-  letter-spacing: 0.02em;
+  border-radius: 7px;
 }
 
 
@@ -892,14 +948,14 @@ select {
 
   padding: 0 9px;
 
-  font-size: 10.5px;
-
   border-radius: 5px;
+
+  font-size: 10.5px;
 }
 
 
 /* =========================================================
-   DEAL / SOURCE TAGS
+   DEAL TAGS
    ========================================================= */
 
 .deal-tag {
@@ -914,9 +970,10 @@ select {
   border-radius: 4px;
 
   font-size: 9px;
+
   font-weight: 700;
 
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
 
   text-transform: uppercase;
 }
@@ -937,9 +994,10 @@ select {
   color: var(--text-faint);
 
   font-size: 9px;
-  font-weight: 600;
 
-  letter-spacing: 0.09em;
+  font-weight: 650;
+
+  letter-spacing: 0.08em;
 
   text-transform: uppercase;
 }
@@ -962,12 +1020,13 @@ select {
 
   color: var(--text-dim);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 21px;
 
-  font-size: 22px;
+  line-height: 1.2;
+
+  font-weight: 600;
+
+  letter-spacing: -0.025em;
 }
 
 
@@ -991,7 +1050,7 @@ select {
   background:
     linear-gradient(90deg,
       var(--surface-2) 25%,
-      #242424 37%,
+      #363636 37%,
       var(--surface-2) 63%);
 
   background-size: 400% 100%;
@@ -1048,14 +1107,15 @@ select {
   padding: 24px;
 
   background:
-    radial-gradient(700px 450px at 50% 0,
-      rgba(198, 161, 74, 0.08),
+    radial-gradient(750px 450px at 50% 0,
+      rgba(199, 161, 90, 0.08),
       transparent 70%),
     var(--bg);
 }
 
 .auth-card {
   width: 100%;
+
   max-width: 410px;
 
   padding: 34px;
@@ -1064,7 +1124,7 @@ select {
 
   border: 1px solid var(--border);
 
-  border-radius: var(--radius-lg);
+  border-radius: 12px;
 
   box-shadow: var(--shadow);
 }
@@ -1074,7 +1134,7 @@ select {
 
   display: block;
 
-  width: 34px;
+  width: 32px;
   height: 2px;
 
   margin-bottom: 20px;
@@ -1083,7 +1143,7 @@ select {
 }
 
 .auth-card h1 {
-  margin-bottom: 22px;
+  margin: 0 0 22px;
 
   font-size: 30px;
 }
@@ -1120,7 +1180,7 @@ select {
   border-color: var(--gold);
 
   box-shadow:
-    0 0 0 3px rgba(198, 161, 74, 0.07);
+    0 0 0 3px rgba(199, 161, 90, 0.07);
 }
 
 .auth-hint {
@@ -1129,6 +1189,7 @@ select {
   color: var(--text-dim);
 
   font-size: 13px;
+
   line-height: 1.55;
 }
 
@@ -1146,6 +1207,7 @@ select {
   color: var(--text-faint);
 
   font-size: 11.5px;
+
   line-height: 1.55;
 }
 
@@ -1155,7 +1217,7 @@ select {
    ========================================================= */
 
 .team-panel {
-  max-width: 1120px;
+  max-width: 1100px;
 
   margin: 0 auto;
 
@@ -1166,6 +1228,7 @@ select {
   display: flex;
 
   justify-content: space-between;
+
   align-items: center;
 
   gap: 12px;
@@ -1178,19 +1241,20 @@ select {
 
   color: var(--text);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
-
   font-size: 20px;
-  font-weight: 500;
+
+  line-height: 1.2;
+
+  font-weight: 600;
+
+  letter-spacing: -0.025em;
 }
 
 .team-list {
   list-style: none;
 
   margin: 0 0 16px;
+
   padding: 0;
 
   overflow: hidden;
@@ -1218,9 +1282,11 @@ select {
   display: flex;
 
   justify-content: space-between;
+
   align-items: center;
 
   gap: 10px;
+
   flex-wrap: wrap;
 }
 
@@ -1230,6 +1296,7 @@ select {
   align-items: center;
 
   gap: 6px;
+
   flex-wrap: wrap;
 }
 
@@ -1240,9 +1307,11 @@ select {
 
   font-size: 10px;
 
-  text-transform: uppercase;
+  font-weight: 600;
 
   letter-spacing: 0.06em;
+
+  text-transform: uppercase;
 }
 
 
@@ -1258,9 +1327,10 @@ select {
   border-radius: 4px;
 
   font-size: 9px;
+
   font-weight: 700;
 
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
 
   text-transform: uppercase;
 }
@@ -1270,7 +1340,7 @@ select {
 
   color: var(--gold);
 
-  border-color: rgba(198, 161, 74, 0.25);
+  border-color: rgba(199, 161, 90, 0.25);
 }
 
 .role-badge-admin {
@@ -1290,6 +1360,7 @@ select {
   display: flex;
 
   gap: 8px;
+
   flex-wrap: wrap;
 
   margin-bottom: 28px;
@@ -1298,8 +1369,6 @@ select {
 .team-invite-form input,
 .team-invite-form select {
   background: var(--surface);
-
-  border-color: var(--border);
 }
 
 
@@ -1318,7 +1387,7 @@ select {
 
   border: 1px solid var(--border);
 
-  border-radius: var(--radius-lg);
+  border-radius: 12px;
 
   box-shadow: var(--shadow);
 }
@@ -1328,12 +1397,11 @@ select {
 
   color: var(--gold);
 
-  font-family:
-    Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 22px;
 
-  font-weight: 500;
+  font-weight: 600;
+
+  letter-spacing: -0.025em;
 }
 
 .config-error code {
@@ -1356,44 +1424,46 @@ select {
 }
 
 .district-toggle.is-active {
-  border-color: var(--gold);
+  background: var(--gold-wash);
+
+  border-color: rgba(199, 161, 90, 0.45);
 
   color: var(--gold-bright);
-
-  background: var(--gold-wash);
 }
 
 .district-menu {
   position: absolute;
 
   top: calc(100% + 7px);
+
   left: 0;
 
   z-index: 30;
 
   width: 230px;
+
   max-width: calc(100vw - 32px);
 
   max-height: 300px;
 
   overflow-y: auto;
 
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 2px;
+
   padding: 7px;
 
-  background: #111;
+  background: var(--surface);
 
   border: 1px solid var(--border);
 
   border-radius: 8px;
 
   box-shadow:
-    0 18px 45px rgba(0, 0, 0, 0.55);
-
-  display: flex;
-
-  flex-direction: column;
-
-  gap: 2px;
+    0 18px 45px rgba(0, 0, 0, 0.4);
 }
 
 .district-option {
@@ -1454,9 +1524,9 @@ select {
 
   cursor: pointer;
 
-  text-decoration: none;
-
   font-family: inherit;
+
+  text-decoration: none;
 }
 
 .link-btn:hover {
@@ -1472,6 +1542,7 @@ select {
 
 ::-webkit-scrollbar {
   width: 7px;
+
   height: 7px;
 }
 
@@ -1480,13 +1551,13 @@ select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #292929;
+  background: #3a3a3a;
 
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: #4a4a4a;
 }
 
 
@@ -1520,7 +1591,7 @@ select {
   }
 
   h1 {
-    font-size: 30px;
+    font-size: 29px;
   }
 
   .subtitle {
@@ -1623,7 +1694,7 @@ select {
     z-index: 20;
 
     box-shadow:
-      0 8px 30px rgba(0, 0, 0, 0.45);
+      0 8px 30px rgba(0, 0, 0, 0.35);
   }
 
   .team-invite-form {
@@ -1648,7 +1719,7 @@ select {
 
 @media (max-width: 420px) {
   h1 {
-    font-size: 27px;
+    font-size: 26px;
   }
 
   .stats {

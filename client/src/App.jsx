@@ -19,7 +19,7 @@ function timeAgo(iso) {
 
 function badgeFor(listing) {
   if (listing.label_kind === 'owner') return { cls: 'badge-owner', text: '✓ Собственник' };
-  if (listing.label_kind === 'unchecked') return { cls: 'badge-unchecked', text: `${listing.label_text || 'Собственник'}` };
+  if (listing.label_kind === 'unchecked') return { cls: 'badge-owner', text: `✓ ${listing.label_text || 'Скорее всего собственник'}` };
   if (listing.label_kind === 'agent') return { cls: 'badge-agent', text: `${listing.label_text || 'Агентство'}` };
   return { cls: 'badge-unsure', text: 'Сомнительно' };
 }
@@ -95,7 +95,7 @@ function DistrictFilter({ selected, onChange }) {
 
 const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted, onToggleSelect, onSaveNote, onAssign }) {
   const badge = badgeFor(listing);
-  const isOwner = listing.label_kind === 'owner';
+  const isOwner = listing.label_kind === 'owner' || listing.label_kind === 'unchecked';
   const isMine = listing.assigned_to === myEmail;
   const assignedToOther = listing.assigned_to && !isMine;
 

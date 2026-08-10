@@ -5,20 +5,20 @@
      тёплый пергаментный текст. Золото — цвет структуры и действий;
      статус "собственник" (самое ценное для команды) — отдельным
      приглушённым зелёным, чтобы не растворяться в золотом фоне интерфейса. */
-  --bg: #0a0a0b;
-  --bg-2: #0e0e10;
-  --surface: #151513;
-  --surface-2: #1c1c19;
-  --border: #2b2822;
-  --border-soft: #221f1a;
-  --text: #f1ead8;
-  --text-dim: #a89d84;
-  --text-faint: #6e6555;
-  --gold: #c6a25a;
-  --gold-bright: #e2c07f;
-  --gold-wash: rgba(198,162,90,0.12);
+  --bg: #17140f;
+  --bg-2: #1c1811;
+  --surface: #211c15;
+  --surface-2: #2b241a;
+  --border: #3c3324;
+  --border-soft: #2c2619;
+  --text: #efe7d6;
+  --text-dim: #ab9f89;
+  --text-faint: #7c705c;
+  --gold: #c19d5a;
+  --gold-bright: #dcb96f;
+  --gold-wash: rgba(193,157,90,0.14);
   --owner: #7fae86;
-  --owner-wash: rgba(127,174,134,0.13);
+  --owner-wash: rgba(127,174,134,0.14);
   --danger: #c1684a;
   --danger-wash: rgba(193,104,74,0.13);
   --radius: 10px;
@@ -28,7 +28,7 @@ html, body, #root{ height:100%; }
 body{
   margin:0;
   background:
-    radial-gradient(1200px 600px at 12% -10%, rgba(198,162,90,0.05), transparent 60%),
+    radial-gradient(1200px 600px at 12% -10%, rgba(193,157,90,0.05), transparent 60%),
     var(--bg);
   color:var(--text);
   font-family:'Inter', system-ui, sans-serif;
@@ -144,7 +144,7 @@ select:focus{ outline:none; border-color:var(--gold); }
   background:var(--gold-wash); border-radius:6px; padding:4px 8px; display:inline-block;
   max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.note-line:hover{ background:rgba(198,162,90,0.2); }
+.note-line:hover{ background:rgba(193,157,90,0.2); }
 .note-input{
   margin-top:6px; width:100%; max-width:340px;
   background:var(--surface-2); border:1px solid var(--gold); border-radius:6px;
@@ -220,7 +220,7 @@ select:focus{ outline:none; border-color:var(--gold); }
 .auth-screen{
   min-height:100vh; display:flex; align-items:center; justify-content:center; padding:2rem;
   background:
-    radial-gradient(900px 500px at 50% 0%, rgba(198,162,90,0.06), transparent 60%),
+    radial-gradient(900px 500px at 50% 0%, rgba(193,157,90,0.06), transparent 60%),
     var(--bg);
 }
 .auth-card{
@@ -266,7 +266,7 @@ select:focus{ outline:none; border-color:var(--gold); }
   font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
   border:1px solid transparent;
 }
-.role-badge-owner{ background:var(--gold-wash); color:var(--gold); border-color:rgba(198,162,90,0.3); }
+.role-badge-owner{ background:var(--gold-wash); color:var(--gold); border-color:rgba(193,157,90,0.3); }
 .role-badge-admin{ background:var(--surface-2); color:var(--text-faint); }
 .btn-small{ font-size:11.5px; padding:4px 9px; border-radius:6px; }
 .team-invite-form{ display:flex; gap:8px; margin-bottom:2rem; flex-wrap:wrap; }
@@ -287,7 +287,7 @@ select:focus{ outline:none; border-color:var(--gold); }
 }
 .config-error h2{ margin:0 0 0.8rem; color:var(--gold); }
 .config-error code{
-  background:rgba(198,162,90,0.12); color:var(--gold-bright); padding:0.1rem 0.4rem; border-radius:5px;
+  background:rgba(193,157,90,0.12); color:var(--gold-bright); padding:0.1rem 0.4rem; border-radius:5px;
 }
 
 /* ---- Фильтр района (мультивыбор) ---- */
@@ -325,7 +325,7 @@ select:focus{ outline:none; border-color:var(--gold); }
 .link-btn:hover{ color:var(--gold-bright); }
 .bulk-bar{
   display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-  background:var(--gold-wash); border:1px solid rgba(198,162,90,0.35); border-radius:var(--radius);
+  background:var(--gold-wash); border:1px solid rgba(193,157,90,0.35); border-radius:var(--radius);
   padding:0.7rem 1rem; margin-bottom:0.9rem; font-size:13.5px; color:var(--gold-bright);
 }
 

@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     const [totalRes, todayRes, ownersRes, notContactedRes] = await Promise.all([
       base(),
       base().gte('created_at', todayCutoff.toISOString()),
-      base().eq('label_kind', 'owner'),
+      base().in('label_kind', ['owner', 'unchecked']),
       base().neq('contacted', true),
     ]);
     for (const r of [totalRes, todayRes, ownersRes, notContactedRes]) {

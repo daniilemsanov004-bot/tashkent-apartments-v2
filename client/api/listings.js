@@ -67,7 +67,7 @@ export default async function handler(req, res) {
     query = query.eq('property_type', req.query.type);
   }
   if (req.query.badge === 'owner') {
-    query = query.eq('label_kind', 'owner');
+    query = query.in('label_kind', ['owner', 'unchecked']);
   } else if (req.query.badge === 'unsure') {
     query = query.eq('label_kind', 'uncertain');
   }

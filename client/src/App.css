@@ -129,10 +129,28 @@ select:focus{ outline:none; border-color:var(--gold); }
    не заливка целой карточки, чтобы не превращать ленту в золотую стену */
 .card.is-owner{ border-left-color:var(--owner); }
 .card-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.card-select{
+  margin-top:3px; width:16px; height:16px; accent-color:var(--gold);
+  flex-shrink:0; cursor:pointer;
+}
+.card-main{ flex:1; min-width:0; }
+.card.is-selected{ border-color:var(--gold); background:var(--surface-2); }
 .card-title{ font-size:15px; font-weight:500; margin:0 0 4px; line-height:1.35; }
 .card-title a{ color:var(--text); text-decoration:none; }
 .card-title a:hover{ color:var(--gold-bright); }
 .card-meta{ font-size:12.5px; color:var(--text-dim); margin:0; }
+.note-line{
+  font-size:12.5px; color:var(--gold-bright); margin:5px 0 0; cursor:pointer;
+  background:var(--gold-wash); border-radius:6px; padding:4px 8px; display:inline-block;
+  max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.note-line:hover{ background:rgba(198,162,90,0.2); }
+.note-input{
+  margin-top:6px; width:100%; max-width:340px;
+  background:var(--surface-2); border:1px solid var(--gold); border-radius:6px;
+  padding:5px 8px; color:var(--text); font-size:12.5px; font-family:inherit;
+}
+.note-input:focus{ outline:none; }
 .badge{
   font-size:11px; padding:4px 10px; border-radius:100px;
   white-space:nowrap; font-weight:500; border:1px solid transparent;
@@ -270,4 +288,82 @@ select:focus{ outline:none; border-color:var(--gold); }
 .config-error h2{ margin:0 0 0.8rem; color:var(--gold); }
 .config-error code{
   background:rgba(198,162,90,0.12); color:var(--gold-bright); padding:0.1rem 0.4rem; border-radius:5px;
+}
+
+/* ---- Фильтр района (мультивыбор) ---- */
+.district-filter{ position:relative; }
+.district-toggle.is-active{ border-color:var(--gold); color:var(--gold-bright); }
+.district-menu{
+  position:absolute; top:calc(100% + 6px); left:0; z-index:20;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:8px; width:220px; max-width:calc(100vw - 2rem);
+  max-height:280px; overflow-y:auto;
+  box-shadow:0 12px 28px rgba(0,0,0,0.45);
+  display:flex; flex-direction:column; gap:2px;
+}
+.district-option{
+  display:flex; align-items:center; gap:8px; font-size:13px;
+  padding:6px 8px; border-radius:6px; cursor:pointer; color:var(--text);
+}
+.district-option:hover{ background:var(--surface-2); }
+.district-option input{ accent-color:var(--gold); }
+.district-clear{ margin-top:4px; width:100%; text-align:center; }
+
+/* ---- Цена ---- */
+.price-input{
+  width:96px; background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; padding:0.65rem 0.7rem; color:var(--text); font-size:13.5px; font-family:inherit;
+}
+.price-input:focus{ outline:none; border-color:var(--gold); }
+.price-input::-webkit-outer-spin-button, .price-input::-webkit-inner-spin-button{ margin:0; }
+
+/* ---- Массовые действия ---- */
+.link-btn{
+  background:none; border:none; padding:0; color:var(--gold);
+  font-size:12px; cursor:pointer; font-family:inherit; text-decoration:underline;
+}
+.link-btn:hover{ color:var(--gold-bright); }
+.bulk-bar{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  background:var(--gold-wash); border:1px solid rgba(198,162,90,0.35); border-radius:var(--radius);
+  padding:0.7rem 1rem; margin-bottom:0.9rem; font-size:13.5px; color:var(--gold-bright);
+}
+
+/* =====================================================================
+   Мобильная адаптивность — команда часто открывает сайт с телефона
+   прямо на объекте, так что тап-зоны крупнее и панель фильтров не
+   разъезжается вбок горизонтальным скроллом.
+   ===================================================================== */
+@media (max-width: 640px){
+  header{ padding:1.6rem 1.1rem 1.1rem; }
+  h1{ font-size:1.6rem; }
+  main{ padding:0 1.1rem 3rem; }
+  .header-top{ flex-direction:column; }
+  .header-actions{ width:100%; }
+  .header-actions .btn{ flex:1; text-align:center; }
+
+  .toolbar{
+    flex-direction:column; align-items:stretch;
+    padding:0.9rem 0 0.8rem;
+  }
+  .toolbar input[type="text"],
+  .toolbar select,
+  .toolbar .price-input,
+  .toolbar .district-filter,
+  .toolbar .district-toggle{ width:100%; }
+  .district-menu{ width:100%; left:0; right:0; }
+
+  .stats{ grid-template-columns:repeat(2, 1fr); }
+
+  .card{ padding:0.95rem 1rem; }
+  .card-actions{ width:100%; }
+  .card-actions .btn,
+  .card-actions a.btn{ flex:1; min-width:calc(50% - 4px); text-align:center; padding:10px 8px; font-size:12.5px; }
+  .card-bottom{ flex-direction:column; align-items:stretch; gap:10px; }
+  .price{ text-align:left; }
+
+  .bulk-bar{ position:sticky; bottom:0.6rem; z-index:6; }
+
+  .team-invite-form{ flex-direction:column; }
+  .team-invite-form input, .team-invite-form select{ width:100%; }
 }

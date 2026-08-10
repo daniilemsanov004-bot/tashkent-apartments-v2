@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback, useRef, memo } from 'react';
 import { supabase, supabaseConfigMissing } from './lib/supabaseClient.js';
+import { DISTRICTS } from './districts.js';
 
 const REFRESH_MS = 20000;
 const PAGE_SIZE = 30;
-const SEARCH_DEBOUNCE_MS = 350;
+const DEBOUNCE_MS = 350;
 
 function timeAgo(iso) {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -35,13 +36,95 @@ function propertyTypeLabel(propertyType) {
   return 'Квартира';
 }
 
-const Card = memo(function Card({ listing, onToggleContacted }) {
+// email → компактное имя для отображения на карточке ("ivan@..." → "ivan")
+function shortAssignee(v) {
+  if (!v) return '';
+  return v.includes('@') ? v.split('@')[0] : v;
+}
+
+// ---------- Выпадающий мультивыбор районов ----------
+
+function DistrictFilter({ selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const toggleDistrict = (d) => {
+    onChange(selected.includes(d) ? selected.filter((x) => x !== d) : [...selected, d]);
+  };
+
+  const label =
+    selected.length === 0 ? 'Все районы' : selected.length === 1 ? selected[0] : `Районы: ${selected.length}`;
+
+  return (
+    <div className="district-filter" ref={ref}>
+      <button
+        type="button"
+        className={`btn district-toggle ${selected.length ? 'is-active' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="district-menu">
+          {DISTRICTS.map((d) => (
+            <label key={d} className="district-option">
+              <input type="checkbox" checked={selected.includes(d)} onChange={() => toggleDistrict(d)} />
+              {d}
+            </label>
+          ))}
+          {selected.length > 0 && (
+            <button type="button" className="btn btn-small district-clear" onClick={() => onChange([])}>
+              Сбросить район
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Карточка объявления ----------
+
+const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted, onToggleSelect, onSaveNote, onAssign }) {
   const badge = badgeFor(listing);
   const isOwner = listing.label_kind === 'owner';
+  const isMine = listing.assigned_to === myEmail;
+  const assignedToOther = listing.assigned_to && !isMine;
+
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(listing.notes || '');
+
+  // Если заметку поменяли где-то ещё (Telegram / другой человек) и мы
+  // сейчас её не редактируем — подхватываем новое значение.
+  useEffect(() => {
+    if (!editingNote) setNoteDraft(listing.notes || '');
+  }, [listing.notes, editingNote]);
+
+  const saveNote = () => {
+    setEditingNote(false);
+    const trimmed = noteDraft.trim();
+    if (trimmed !== (listing.notes || '')) onSaveNote(listing.id, trimmed);
+  };
+
   return (
-    <div className={`card ${listing.contacted ? 'is-contacted' : ''} ${isOwner ? 'is-owner' : ''}`}>
+    <div className={`card ${listing.contacted ? 'is-contacted' : ''} ${isOwner ? 'is-owner' : ''} ${selected ? 'is-selected' : ''}`}>
       <div className="card-top">
-        <div>
+        <input
+          type="checkbox"
+          className="card-select"
+          checked={selected}
+          onChange={() => onToggleSelect(listing.id)}
+          aria-label="Выбрать объявление"
+        />
+        <div className="card-main">
           <p className="card-title">
             <a href={listing.url} target="_blank" rel="noreferrer">{listing.title}</a>
           </p>
@@ -51,14 +134,44 @@ const Card = memo(function Card({ listing, onToggleContacted }) {
             <span className="source-tag">{listing.source}</span>
             &nbsp;·&nbsp;{timeAgo(listing.created_at)}
             {listing.district ? ` · ${listing.district}` : ''}
-            {listing.assigned_to ? ` · Взял: ${listing.assigned_to}` : ''}
+            {listing.assigned_to ? ` · Взял: ${shortAssignee(listing.assigned_to)}` : ''}
           </p>
+          {editingNote ? (
+            <input
+              autoFocus
+              className="note-input"
+              value={noteDraft}
+              maxLength={500}
+              placeholder="Заметка — например, перезвонить завтра"
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onBlur={saveNote}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveNote();
+                if (e.key === 'Escape') { setNoteDraft(listing.notes || ''); setEditingNote(false); }
+              }}
+            />
+          ) : listing.notes ? (
+            <p className="note-line" onClick={() => setEditingNote(true)} title="Нажмите, чтобы изменить">
+              📝 {listing.notes}
+            </p>
+          ) : null}
         </div>
         <span className={`badge ${badge.cls}`}>{badge.text}</span>
       </div>
       <div className="card-bottom">
         <span className="price">{listing.price || 'цена не указана'}</span>
         <div className="card-actions">
+          {!listing.notes && !editingNote && (
+            <button className="btn" onClick={() => setEditingNote(true)}>+ Заметка</button>
+          )}
+          <button
+            className={`btn ${isMine ? 'is-on btn-contact' : ''}`}
+            disabled={assignedToOther}
+            title={assignedToOther ? `Уже взял в работу: ${listing.assigned_to}` : undefined}
+            onClick={() => onAssign(listing.id)}
+          >
+            {isMine ? '↩️ Освободить' : assignedToOther ? `Взял: ${shortAssignee(listing.assigned_to)}` : 'Взять в работу'}
+          </button>
           <button
             className={`btn btn-contact ${listing.contacted ? 'is-on' : ''}`}
             onClick={() => onToggleContacted(listing.id, !listing.contacted)}
@@ -341,12 +454,23 @@ function Dashboard() {
   const [stats, setStats] = useState({ total: 0, today: 0, owners: 0, notContacted: 0 });
 
   const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState(''); // debounced
+  const [search, setSearch] = useState('');
   const [dealFilter, setDealFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [contactedFilter, setContactedFilter] = useState('all');
   const [daysRange, setDaysRange] = useState('3');
+  const [districtFilter, setDistrictFilter] = useState([]);
+  const [sortBy, setSortBy] = useState('new');
+  const [priceCurrency, setPriceCurrency] = useState('all');
+  const [priceMinInput, setPriceMinInput] = useState('');
+  const [priceMaxInput, setPriceMaxInput] = useState('');
+  const [priceMin, setPriceMin] = useState('');
+  const [priceMax, setPriceMax] = useState('');
+  const [assignedFilter, setAssignedFilter] = useState('all');
+
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -354,12 +478,18 @@ function Dashboard() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Поиск — с задержкой: без неё каждая буква гоняла бы отдельный
-  // запрос к базе, а лента дёргалась бы на каждое нажатие клавиши.
   useEffect(() => {
-    const id = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    const id = setTimeout(() => setSearch(searchInput.trim()), DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [searchInput]);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setPriceMin(priceMinInput);
+      setPriceMax(priceMaxInput);
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [priceMinInput, priceMaxInput]);
 
   const authFetch = useCallback(
     async (url, options = {}) => {
@@ -394,8 +524,14 @@ function Dashboard() {
     if (contactedFilter !== 'all') {
       params.set('contacted', contactedFilter === 'contacted' ? 'yes' : 'no');
     }
+    if (districtFilter.length) params.set('district', districtFilter.join(','));
+    if (sortBy !== 'new') params.set('sort', sortBy);
+    if (priceCurrency !== 'all') params.set('currency', priceCurrency);
+    if (priceMin) params.set('priceMin', priceMin);
+    if (priceMax) params.set('priceMax', priceMax);
+    if (assignedFilter === 'none') params.set('assigned', 'none');
     return `/api/listings?${params.toString()}`;
-  }, [daysRange, search, dealFilter, typeFilter, badgeFilter, contactedFilter]);
+  }, [daysRange, search, dealFilter, typeFilter, badgeFilter, contactedFilter, districtFilter, sortBy, priceCurrency, priceMin, priceMax, assignedFilter]);
 
   const fetchStats = useCallback(async () => {
     const res = await authFetch(`/api/stats?days=${daysRange}`);
@@ -407,15 +543,13 @@ function Dashboard() {
     }
   }, [authFetch, daysRange]);
 
-  // Загрузка "с нуля" — когда меняются фильтры/поиск/диапазон дат.
-  // requestId защищает от гонки: если пользователь быстро переключает
-  // фильтры, более старый ответ, пришедший позже нового, игнорируется.
   const requestIdRef = useRef(0);
   useEffect(() => {
     if (!session) return;
     const myRequestId = ++requestIdRef.current;
     setLoadingInitial(true);
     setPage(0);
+    setSelectedIds(new Set());
     authFetch(buildListingsUrl(0)).then(async (res) => {
       if (!res || myRequestId !== requestIdRef.current) return;
       try {
@@ -448,18 +582,17 @@ function Dashboard() {
         setHasMore(data.hasMore);
         setPage(nextPage);
       } catch {
-        // страница подгрузки не критична — просто не увеличиваем page, кнопка останется доступной
+        // не критично — просто не увеличиваем page, кнопка останется доступной
       }
     }
     setLoadingMore(false);
   }, [loadingMore, hasMore, page, authFetch, buildListingsUrl]);
 
-  // Автообновление раз в 20 сек: подтягиваем только САМУЮ первую
-  // страницу и добавляем в начало ленты то, чего там ещё не было —
-  // а не перекачиваем и не перерисовываем всё заново (раньше именно
-  // это и было причиной подтормаживаний при большой базе).
+  // Автообновление — только сортировка "новые сверху" имеет смысл
+  // тихо пополнять; при сортировке по цене новый элемент может лечь
+  // в середину списка, поэтому автообновление в этом режиме не трогаем.
   useEffect(() => {
-    if (!session) return;
+    if (!session || sortBy !== 'new') return;
     const id = setInterval(async () => {
       const res = await authFetch(buildListingsUrl(0));
       if (!res) return;
@@ -473,12 +606,12 @@ function Dashboard() {
         });
         setStatusText('Обновлено ' + new Date().toLocaleTimeString('ru-RU'));
       } catch {
-        // тихо пропускаем один цикл автообновления — не критично
+        // тихо пропускаем один цикл автообновления
       }
       fetchStats();
     }, REFRESH_MS);
     return () => clearInterval(id);
-  }, [session, authFetch, buildListingsUrl, fetchStats]);
+  }, [session, sortBy, authFetch, buildListingsUrl, fetchStats]);
 
   const toggleContacted = useCallback(async (id, next) => {
     setItems((prev) => prev.map((l) => (l.id === id ? { ...l, contacted: next } : l)));
@@ -488,6 +621,62 @@ function Dashboard() {
       body: JSON.stringify({ id, contacted: next }),
     });
   }, [authFetch]);
+
+  const saveNote = useCallback(async (id, notes) => {
+    setItems((prev) => prev.map((l) => (l.id === id ? { ...l, notes } : l)));
+    await authFetch('/api/note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, notes }),
+    });
+  }, [authFetch]);
+
+  const myEmail = session?.user?.email;
+
+  const toggleAssign = useCallback(async (id) => {
+    const res = await authFetch('/api/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (!res) return;
+    if (res.ok) {
+      const data = await res.json();
+      setItems((prev) => prev.map((l) => (l.id === id ? { ...l, assigned_to: data.assigned_to, assigned_at: data.assigned_at } : l)));
+    } else if (res.status === 409) {
+      const body = await res.json().catch(() => null);
+      if (body?.assigned_to) {
+        setItems((prev) => prev.map((l) => (l.id === id ? { ...l, assigned_to: body.assigned_to } : l)));
+      }
+    }
+  }, [authFetch]);
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllLoaded = useCallback(() => setSelectedIds(new Set(items.map((l) => l.id))), [items]);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const bulkMarkContacted = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkWorking(true);
+    setItems((prev) => prev.map((l) => (selectedIds.has(l.id) ? { ...l, contacted: true } : l)));
+    await Promise.all(ids.map((id) =>
+      authFetch('/api/contacted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, contacted: true }),
+      })
+    ));
+    setSelectedIds(new Set());
+    setBulkWorking(false);
+  }, [selectedIds, authFetch]);
 
   const [cleaningAgents, setCleaningAgents] = useState(false);
 
@@ -521,6 +710,7 @@ function Dashboard() {
     if (res?.ok) {
       setItems([]);
       setHasMore(false);
+      setSelectedIds(new Set());
       fetchStats();
     }
   }, [authFetch, fetchStats]);
@@ -532,10 +722,20 @@ function Dashboard() {
     setTypeFilter('all');
     setBadgeFilter('all');
     setContactedFilter('all');
+    setDistrictFilter([]);
+    setSortBy('new');
+    setPriceCurrency('all');
+    setPriceMinInput('');
+    setPriceMaxInput('');
+    setPriceMin('');
+    setPriceMax('');
+    setAssignedFilter('all');
   }, []);
 
   const filtersActive =
-    search || dealFilter !== 'all' || typeFilter !== 'all' || badgeFilter !== 'all' || contactedFilter !== 'all';
+    search || dealFilter !== 'all' || typeFilter !== 'all' || badgeFilter !== 'all' ||
+    contactedFilter !== 'all' || districtFilter.length > 0 || sortBy !== 'new' ||
+    priceCurrency !== 'all' || priceMin || priceMax || assignedFilter !== 'all';
 
   // ---- Экраны в зависимости от состояния авторизации ----
 
@@ -588,6 +788,7 @@ function Dashboard() {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
+          <DistrictFilter selected={districtFilter} onChange={setDistrictFilter} />
           <select value={dealFilter} onChange={(e) => setDealFilter(e.target.value)}>
             <option value="all">Аренда и продажа</option>
             <option value="rent">Только аренда</option>
@@ -614,6 +815,36 @@ function Dashboard() {
             <option value="not-contacted">Ещё не связались</option>
             <option value="contacted">Уже связались</option>
           </select>
+          <select value={assignedFilter} onChange={(e) => setAssignedFilter(e.target.value)}>
+            <option value="all">Взято и не взято</option>
+            <option value="none">Не взято никем</option>
+          </select>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <option value="new">Сначала новые</option>
+            <option value="price_asc">Цена: дешёвые → дорогие</option>
+            <option value="price_desc">Цена: дорогие → дешёвые</option>
+          </select>
+          <select value={priceCurrency} onChange={(e) => setPriceCurrency(e.target.value)}>
+            <option value="all">Любая валюта</option>
+            <option value="USD">USD</option>
+            <option value="UZS">UZS</option>
+          </select>
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="Цена от"
+            className="price-input"
+            value={priceMinInput}
+            onChange={(e) => setPriceMinInput(e.target.value)}
+          />
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="Цена до"
+            className="price-input"
+            value={priceMaxInput}
+            onChange={(e) => setPriceMaxInput(e.target.value)}
+          />
           {filtersActive && (
             <button className="btn" onClick={resetFilters}>Сбросить фильтры</button>
           )}
@@ -625,7 +856,23 @@ function Dashboard() {
 
         <p className="results-count">
           Показано: {items.length}{hasMore ? '+' : ''} из {stats.total}
+          {items.length > 0 && (
+            <>
+              {' · '}
+              <button type="button" className="link-btn" onClick={selectAllLoaded}>выбрать все загруженные</button>
+            </>
+          )}
         </p>
+
+        {selectedIds.size > 0 && (
+          <div className="bulk-bar">
+            <span>Выбрано: {selectedIds.size}</span>
+            <button className="btn btn-primary" onClick={bulkMarkContacted} disabled={bulkWorking}>
+              {bulkWorking ? 'Отмечаю…' : '✓ Отметить связь у выбранных'}
+            </button>
+            <button className="btn" onClick={clearSelection}>Снять выделение</button>
+          </div>
+        )}
 
         <div className="feed">
           {loadingInitial ? (
@@ -639,7 +886,16 @@ function Dashboard() {
             </div>
           ) : (
             items.map((l) => (
-              <Card key={l.id} listing={l} onToggleContacted={toggleContacted} />
+              <Card
+                key={l.id}
+                listing={l}
+                selected={selectedIds.has(l.id)}
+                myEmail={myEmail}
+                onToggleContacted={toggleContacted}
+                onToggleSelect={toggleSelect}
+                onSaveNote={saveNote}
+                onAssign={toggleAssign}
+              />
             ))
           )}
         </div>

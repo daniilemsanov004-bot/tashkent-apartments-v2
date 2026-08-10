@@ -32,7 +32,16 @@ export default async function handler(req, res) {
   const pageSize = Math.min(PAGE_SIZE_MAX, Math.max(1, Number(req.query.pageSize) || PAGE_SIZE_DEFAULT));
   const q = (req.query.q || '').trim();
 
-  let query = supabase.from('listings').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+  let query = supabase.from('listings').select('*', { count: 'exact' });
+
+  const sort = req.query.sort; // 'new' (по умолчанию) | 'price_asc' | 'price_desc'
+  if (sort === 'price_asc') {
+    query = query.order('price_value', { ascending: true, nullsFirst: false });
+  } else if (sort === 'price_desc') {
+    query = query.order('price_value', { ascending: false, nullsFirst: false });
+  } else {
+    query = query.order('created_at', { ascending: false });
+  }
 
   if (days !== null) {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -68,6 +77,32 @@ export default async function handler(req, res) {
     query = query.neq('contacted', true);
   }
 
+  // Район — точное совпадение с нормализованным canonical-названием
+  // (см. _districts.js). Можно выбрать несколько через запятую.
+  if (req.query.district) {
+    const districts = req.query.district.split(',').map((d) => d.trim()).filter(Boolean);
+    if (districts.length === 1) {
+      query = query.eq('district', districts[0]);
+    } else if (districts.length > 1) {
+      query = query.in('district', districts);
+    }
+  }
+
+  // Цена: price_value — просто число без учёта валюты, поэтому
+  // диапазон имеет смысл только вместе с выбранной валютой (иначе
+  // сравниваются несопоставимые величины — доллары и суммы).
+  if (req.query.currency === 'USD' || req.query.currency === 'UZS') {
+    query = query.eq('price_currency', req.query.currency);
+  }
+  const priceMin = Number(req.query.priceMin);
+  const priceMax = Number(req.query.priceMax);
+  if (req.query.priceMin && Number.isFinite(priceMin)) query = query.gte('price_value', priceMin);
+  if (req.query.priceMax && Number.isFinite(priceMax)) query = query.lte('price_value', priceMax);
+
+  if (req.query.assigned === 'none') {
+    query = query.is('assigned_to', null);
+  }
+
   const from = page * pageSize;
   const to = from + pageSize - 1;
   const { data, error, count } = await query.range(from, to);
@@ -79,7 +114,7 @@ export default async function handler(req, res) {
 
   const total = count ?? data.length;
   res.status(200).json({
-    items: sortByPriority(data), // сортировка "собственники сверху" — только внутри этой страницы
+    items: sort === 'price_asc' || sort === 'price_desc' ? data : sortByPriority(data),
     total,
     hasMore: from + data.length < total,
   });

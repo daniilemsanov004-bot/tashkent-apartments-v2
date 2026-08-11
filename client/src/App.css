@@ -1,19 +1,19 @@
 :root{
-  /* ---- Чёрно-золотая палитра ----
-     Не "глянцевый люкс", а скорее реестр/гроссбух: тёплый почти-чёрный
-     фон, приглушённое старое золото как рабочий акцент (не блестящее),
-     тёплый пергаментный текст. Золото — цвет структуры и действий;
-     статус "собственник" (самое ценное для команды) — отдельным
-     приглушённым зелёным, чтобы не растворяться в золотом фоне интерфейса. */
-  --bg: #17140f;
-  --bg-2: #1c1811;
-  --surface: #211c15;
-  --surface-2: #2b241a;
-  --border: #3c3324;
-  --border-soft: #2c2619;
-  --text: #efe7d6;
-  --text-dim: #ab9f89;
-  --text-faint: #7c705c;
+  /* ---- Тёмно-серая + золотая палитра ----
+     Нейтральный графитовый фон (без коричневого/жёлтого подтона в
+     самом сером — холодная, чуть синеватая база), золото оставлено как
+     единственный тёплый акцент, чтобы оно по-прежнему читалось как
+     "цвет структуры и действий" на контрасте с холодным серым, а не
+     терялось. Статус "собственник" — отдельным приглушённым зелёным. */
+  --bg: #16171a;
+  --bg-2: #1b1c20;
+  --surface: #1f2024;
+  --surface-2: #292a2f;
+  --border: #383a41;
+  --border-soft: #2a2b30;
+  --text: #e9e9eb;
+  --text-dim: #9a9ca3;
+  --text-faint: #6f7177;
   --gold: #c19d5a;
   --gold-bright: #dcb96f;
   --gold-wash: rgba(193,157,90,0.14);
@@ -341,6 +341,13 @@ select:focus{ outline:none; border-color:var(--gold); }
    прямо на объекте, так что тап-зоны крупнее и панель фильтров не
    разъезжается вбок горизонтальным скроллом.
    ===================================================================== */
+/* ---- Планшет: та же лента, но чуть теснее поля и общая ширина ---- */
+@media (max-width: 900px){
+  header{ padding:2rem 1.5rem 1.2rem; }
+  main{ padding:0 1.5rem 3.5rem; }
+  .team-panel{ padding:1.2rem 1.5rem 0; }
+}
+
 @media (max-width: 640px){
   header{ padding:1.6rem 1.1rem 1.1rem; }
   h1{ font-size:1.6rem; }
@@ -370,6 +377,14 @@ select:focus{ outline:none; border-color:var(--gold); }
 
   .card{ padding:0.95rem 1rem; }
   .card-thumb{ width:52px; height:52px; }
+
+  /* Бейдж статуса ("✓ Скорее всего собственник") раньше стоял в один
+     ряд с заголовком (flex, nowrap) — на узком экране он не переносится
+     и выдавливает заголовок в узкую полоску. На мобильном переносим
+     его на отдельную строку под заголовком/картинкой. */
+  .card-top{ flex-wrap:wrap; }
+  .card-top .badge{ order:3; flex-basis:100%; margin-top:8px; white-space:normal; text-align:left; }
+
   .card-actions{ width:100%; }
   .card-actions .btn,
   .card-actions a.btn{ flex:1; min-width:calc(50% - 4px); text-align:center; padding:10px 8px; font-size:12.5px; }
@@ -380,4 +395,17 @@ select:focus{ outline:none; border-color:var(--gold); }
 
   .team-invite-form{ flex-direction:column; }
   .team-invite-form input, .team-invite-form select{ width:100%; }
+}
+
+/* ---- Совсем узкие телефоны (SE и т.п.) ---- */
+@media (max-width: 380px){
+  h1{ font-size:1.35rem; }
+  .eyebrow{ font-size:10.5px; }
+  .stats{ grid-template-columns:1fr 1fr; gap:8px; }
+  .stat{ padding:0.8rem 0.9rem; }
+  .stat .num{ font-size:1.4rem; }
+  .card-thumb{ width:44px; height:44px; }
+  .card-title{ font-size:14px; }
+  .card-actions .btn,
+  .card-actions a.btn{ min-width:100%; }
 }

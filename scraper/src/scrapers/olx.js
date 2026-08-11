@@ -255,7 +255,16 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   // сайте (см. баг с мусорным CSS в карточках объявлений).
   const descriptionEl = $('[data-cy="ad_description"]').clone();
   descriptionEl.find('style, script').remove();
-  const description = descriptionEl.text().trim();
+  let description = descriptionEl.text().trim();
+  // Страховка на случай, если <style> окажется ВНЕ поддерева
+  // ad_description (например, вынесен в соседний узел вёрсткой) —
+  // тогда .find() выше его не увидит и текст CSS-правила всё равно
+  // просочится. Дополнительно вырезаем сам паттерн CSS-правила
+  // (".css-xxxxx{...}") прямо из итогового текста.
+  description = description
+    .replace(/\.css-[\w-]+\s*\{[^{}]*\}?/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
   const jsonLd = parseJsonLd($);

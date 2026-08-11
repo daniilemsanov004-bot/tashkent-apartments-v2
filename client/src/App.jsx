@@ -42,6 +42,23 @@ function shortAssignee(v) {
   return v.includes('@') ? v.split('@')[0] : v;
 }
 
+// OLX иногда протекает CSS-in-JS текстом прямо в описание — в базе
+// уже есть старые записи с ".css-1f8vyal{...}" внутри raw_text
+// (сам источник бага починен в scraper/src/scrapers/olx.js, но это
+// не переписывает задним числом то, что уже сохранено). Чистим на
+// отображении, чтобы старые карточки не редеплоить/не пересобирать
+// заново — режем куски вида ".css-xxxxx{...}" и обрывки CSS-переменных
+// вроде "var(--fontSizeHeadlineLarge, 24px)", которые остаются от
+// обрезанного посередине CSS-правила.
+function stripCssGarbage(text) {
+  return text
+    .replace(/\.css-[\w-]+\s*\{[^{}]*\}?/g, ' ')
+    .replace(/[\w-]*\{[^{}]*--[\w-]+[^{}]*\}?/g, ' ')
+    .replace(/var\(--[\w-]+(?:,[^)]*)?\)?/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // raw_text — это "заголовок\nописание"; показываем только то, что после
 // заголовка, и обрезаем — на карточке это просто краткая выдержка, а не
 // полный текст объявления.
@@ -51,7 +68,7 @@ function descriptionExcerpt(listing) {
   if (listing.title && text.startsWith(listing.title)) {
     text = text.slice(listing.title.length);
   }
-  text = text.replace(/\s+/g, ' ').trim();
+  text = stripCssGarbage(text.replace(/\s+/g, ' ')).trim();
   if (!text) return null;
   return text.length > 170 ? `${text.slice(0, 170).trim()}…` : text;
 }

@@ -34,24 +34,30 @@ import { getWithRetry } from '../http.js';
 //   - "Дом/Дача" + Аренда → property_type=2, category=5
 //   - "Коммерческое" + Аренда → property_type=4, category=6
 //
-// НЕ подтверждено напрямую, но взято по аналогии (см. TODO ниже):
-//   - Аренда КВАРТИР — на скриншотах фильтр "Тип недвижимости" не был
-//     переключён на "Квартиры", поэтому deal_type=2 с
-//     property_type=1/category=8 (эти id подтверждены для ПРОДАЖИ
-//     квартир) впрямую для аренды не сфотографирован. Предполагаем,
-//     что category/property_type — это отдельная ось от deal_type
-//     (тип объекта не должен меняться в зависимости от
-//     аренда/продажа), и раз это подтвердилось для домов и коммерции
-//     (одинаковые category/property_type, разный только deal_type),
-//     скорее всего верно и для квартир. Если после первого прогона
-//     аренда квартир будет давать 0 объявлений или ошибку — открыть
-//     joymee.uz → Аренда → Тип недвижимости → Квартиры → DevTools →
-//     проверить реальный property_type/category в запросе.
-//   - Дома/коммерция для ПРОДАЖИ (deal_type=3) — скриншоты сняты на
-//     вкладке "Аренда", category/property_type для продажи домов и
-//     коммерции по той же логике (ось "тип объекта" не должна
-//     зависеть от deal_type) взяты те же самые id, но лучше
-//     перепроверить, если результаты покажутся странными.
+// ПОДТВЕРЖДЕНО ВЖИВУЮ 11.08.2026 (скриншоты DevTools, вкладка
+// "Продажа" на joymee.uz):
+//   - "Дом/Дача" + Продажа → property_type=2, category=9
+//   - "Коммерческое" + Продажа → property_type=4, category=10
+//
+// ВАЖНЫЙ ВЫВОД из сравнения этих двух наборов скриншотов: property_type
+// действительно не зависит от deal_type (2 и 4 совпали для дома и
+// коммерции что на продаже, что на аренде) — а вот "category" ЗАВИСИТ
+// от deal_type (для дома: 5 при аренде vs 9 при продаже; для
+// коммерции: 6 при аренде vs 10 при продаже). Раньше предполагалось
+// обратное (что category/property_type — общая ось, не зависящая от
+// deal_type) — это предположение оказалось НЕВЕРНЫМ.
+//
+// ПОДТВЕРЖДЕНО ВЖИВУЮ 11.08.2026 (скриншот DevTools, вкладка "Аренда"
+// → "Квартира" на joymee.uz):
+//   - "Квартира" + Аренда → property_type=1, category=4
+//
+// Это ЗАКРЫВАЕТ вопрос из предыдущей версии комментария: category для
+// аренды квартир действительно оказалась ДРУГОЙ, чем для продажи (8),
+// как и предполагалось по паттерну дом/коммерция. Теперь все 6
+// комбинаций (3 типа объекта × sale/rent) подтверждены вживую
+// скриншотами DevTools — см. таблицу в JOYMEE_CATEGORY ниже.
+//
+// Прочие открытые вопросы:
 //   - настоящий URL страницы объявления на самом сайте (joymee.uz) —
 //     видели только API-эндпоинт деталей, реальный фронтенд-адрес
 //     карточки в браузере не зафиксирован. Ниже используется
@@ -79,18 +85,30 @@ const JOYMEE_DEAL_TYPE = {
   rent: 2,
 };
 
-// category/property_type — подтверждено вживую 11.08.2026:
-//   - apartment: property_type=1, category=8 (подтверждено для
-//     продажи; для аренды не переснято отдельно, но по конструкции
-//     API это должна быть та же пара — см. комментарий в шапке файла)
-//   - house ("Дом/Дача"): property_type=2, category=5 (подтверждено
-//     для аренды)
-//   - commercial ("Коммерческое"): property_type=4, category=6
-//     (подтверждено для аренды)
+// category/property_type — ВСЕ 6 комбинаций ПОДТВЕРЖДЕНЫ ВЖИВУЮ
+// 11.08.2026 через DevTools (см. подробный разбор в шапке файла —
+// category зависит от deal_type, property_type — нет):
+//
+//   sale (deal_type=3):
+//     - apartment: property_type=1, category=8
+//     - house:     property_type=2, category=9
+//     - commercial:property_type=4, category=10
+//
+//   rent (deal_type=2):
+//     - apartment: property_type=1, category=4
+//     - house:     property_type=2, category=5
+//     - commercial:property_type=4, category=6
 const JOYMEE_CATEGORY = {
-  apartment: { property_type: 1, category: 8 },
-  house: { property_type: 2, category: 5 },
-  commercial: { property_type: 4, category: 6 },
+  sale: {
+    apartment: { property_type: 1, category: 8 },
+    house: { property_type: 2, category: 9 },
+    commercial: { property_type: 4, category: 10 },
+  },
+  rent: {
+    apartment: { property_type: 1, category: 4 },
+    house: { property_type: 2, category: 5 },
+    commercial: { property_type: 4, category: 6 },
+  },
 };
 
 // Сколько объявлений забирать за один запрос списка. Не подтверждено
@@ -117,14 +135,14 @@ function isToday(dateStr) {
  */
 export async function fetchJoymeeListings(dealType = 'rent', propertyType = 'apartment') {
   const dealTypeValue = JOYMEE_DEAL_TYPE[dealType];
-  const categoryInfo = JOYMEE_CATEGORY[propertyType];
+  const categoryInfo = JOYMEE_CATEGORY[dealType]?.[propertyType];
 
   if (dealTypeValue == null) {
     console.warn(`[joymee-${propertyType}-${dealType}] deal_type для "${dealType}" не подтверждён — пропускаю (см. TODO в scrapers/joymee.js)`);
     return [];
   }
   if (!categoryInfo) {
-    console.warn(`[joymee-${propertyType}-${dealType}] category/property_type для "${propertyType}" не подтверждены — пропускаю (см. TODO в scrapers/joymee.js)`);
+    console.warn(`[joymee-${propertyType}-${dealType}] category/property_type для "${propertyType}"/"${dealType}" не подтверждены — пропускаю (см. TODO в scrapers/joymee.js)`);
     return [];
   }
 

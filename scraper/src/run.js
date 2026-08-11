@@ -426,10 +426,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 // фильтрация по метке "Частный продавец" внутри scrapers/realting.js).
 const OLX_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 const REALTING_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
-// Joymee: квартиры/дома/коммерция — все три подтверждены вживую
-// (11.08.2026, см. JOYMEE_CATEGORY в scrapers/joymee.js). deal_type
-// для аренды (2) тоже подтверждён — см. main() ниже, теперь
-// раскомментирован и для домов/коммерции/квартир.
+// Joymee: квартиры/дома/коммерция для ПРОДАЖИ И АРЕНДЫ — все 6
+// комбинаций подтверждены вживую (11.08.2026, см. JOYMEE_CATEGORY в
+// scrapers/joymee.js).
 const JOYMEE_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 
 async function main() {
@@ -443,7 +442,8 @@ async function main() {
     await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType);
   }
   // Joymee: endpoint/поля подтверждены вживую 11.08.2026 (см. шапку
-  // scrapers/joymee.js) — продажа квартир/домов/коммерции. Фильтр
+  // scrapers/joymee.js) — продажа квартир/домов/коммерции (все три
+  // category/property_type подтверждены скриншотами DevTools). Фильтр
   // "только собственники" реализован через advertiser_type в
   // fetchJoymeeDetails (advertiser_type !== 1 → sellerNameLooksLikeAgent
   // → агентства не уходят в Telegram, см. processSource выше).
@@ -460,13 +460,9 @@ async function main() {
     await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType);
   }
   // Joymee-аренда: deal_type=2 подтверждён вживую 11.08.2026 (см.
-  // JOYMEE_DEAL_TYPE в scrapers/joymee.js). Аренда квартир использует
-  // ту же пару property_type/category, что и продажа квартир — это
-  // ПРЕДПОЛОЖЕНИЕ по аналогии с домами/коммерцией (см. подробный
-  // комментарий в шапке scrapers/joymee.js), не переснято отдельным
-  // скриншотом. Если после первого прогона аренда квартир будет
-  // давать 0 объявлений или явную ошибку — перепроверить через
-  // DevTools и поправить JOYMEE_CATEGORY.apartment при необходимости.
+  // JOYMEE_DEAL_TYPE в scrapers/joymee.js), квартиры/дом/коммерция для
+  // аренды тоже все подтверждены (см. JOYMEE_CATEGORY.rent в
+  // scrapers/joymee.js).
   for (const propertyType of JOYMEE_PROPERTY_TYPES) {
     await processSource(fetchJoymeeListings, fetchJoymeeDetails, 'joymee', 'rent', null, propertyType);
   }

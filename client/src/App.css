@@ -50,7 +50,6 @@ header{
   margin-bottom:0.55rem;
 }
 h1{
-  font-family:'Fraunces', serif;
   font-weight:600;
   font-size:2.15rem;
   margin:0 0 0.4rem;
@@ -109,7 +108,7 @@ select:focus{ outline:none; border-color:var(--gold); }
 }
 .stat.stat-owner::after{ background:linear-gradient(90deg, var(--owner), transparent 75%); opacity:0.8; }
 .stat .num{
-  font-family:'Fraunces', serif; font-size:1.7rem; font-weight:600;
+  font-size:1.7rem; font-weight:600;
   font-variant-numeric:tabular-nums; color:var(--text);
 }
 .stat.stat-owner .num{ color:var(--owner); }
@@ -170,7 +169,7 @@ select:focus{ outline:none; border-color:var(--gold); }
   display:flex; justify-content:space-between; align-items:center;
   margin-top:0.85rem; padding-top:0.85rem; border-top:1px solid var(--border-soft);
 }
-.price{ font-size:15.5px; font-weight:600; font-family:'Fraunces', serif; }
+.price{ font-size:15.5px; font-weight:600; }
 .card-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
 .btn{
@@ -202,7 +201,7 @@ select:focus{ outline:none; border-color:var(--gold); }
 .source-tag{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); }
 
 .empty{ text-align:center; padding:4rem 1rem; color:var(--text-faint); }
-.empty .big{ font-family:'Fraunces', serif; font-size:1.3rem; color:var(--text-dim); margin-bottom:0.4rem; }
+.empty .big{ font-size:1.3rem; color:var(--text-dim); margin-bottom:0.4rem; }
 
 /* ---- Скелетоны загрузки — вместо резкого "прыжка" контента ---- */
 .card-skeleton{ display:flex; flex-direction:column; gap:10px; }
@@ -256,7 +255,7 @@ select:focus{ outline:none; border-color:var(--gold); }
   max-width:980px; margin:0 auto; padding:1.2rem 2rem 0;
 }
 .team-panel-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem; }
-.team-panel-header h3{ font-family:'Fraunces', serif; font-size:1.2rem; margin:0; color:var(--gold); }
+.team-panel-header h3{ font-size:1.2rem; margin:0; color:var(--gold); }
 .team-list{
   list-style:none; padding:0; margin:0 0 1rem;
   background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);

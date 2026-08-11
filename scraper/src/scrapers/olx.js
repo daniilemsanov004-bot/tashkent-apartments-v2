@@ -256,6 +256,12 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   const descriptionEl = $('[data-cy="ad_description"]').clone();
   descriptionEl.find('style, script').remove();
   let description = descriptionEl.text().trim();
+  // Внутри ad_description на странице OLX есть свой заголовок-лейбл
+  // "Описание" (<h2>/<div> перед самим текстом объявления) — .text()
+  // склеивает его с текстом объявления без пробела/переноса строки,
+  // получается "ОписаниеOlmazor tumani..." прямо в начале. Срезаем
+  // этот лейбл, если он оказался приклеен к началу.
+  description = description.replace(/^Описание\s*/i, '');
   // Страховка на случай, если <style> окажется ВНЕ поддерева
   // ad_description (например, вынесен в соседний узел вёрсткой) —
   // тогда .find() выше его не увидит и текст CSS-правила всё равно

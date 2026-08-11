@@ -352,6 +352,12 @@ select:focus{ outline:none; border-color:var(--gold); }
   .toolbar{
     flex-direction:column; align-items:stretch;
     padding:0.9rem 0 0.8rem;
+    /* На мобильной ширине панель фильтров становится колонкой (все
+       фильтры друг под другом) и получается высокой — с унаследованным
+       position:sticky она прилипает к верху экрана и перекрывает собой
+       все объявления при скролле. На мобильном это не нужно, обычная
+       прокрутка вместе со страницей ведёт себя ожидаемо. */
+    position:static;
   }
   .toolbar input[type="text"],
   .toolbar select,

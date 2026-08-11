@@ -36,3 +36,8 @@ jobs:
           TELEGRAM_GROUP_HOUSE: ${{ secrets.TELEGRAM_GROUP_HOUSE }}
           USE_AI_CLASSIFICATION: ${{ secrets.USE_AI_CLASSIFICATION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Опционально: http://user:pass@host:port резидентного/мобильного
+          # прокси для запросов к OLX (см. src/http.js). Если секрет не
+          # задан в репозитории — переменная просто пустая, и код работает
+          # как раньше, напрямую с IP GitHub Actions runner'а.
+          OLX_PROXY_URL: ${{ secrets.OLX_PROXY_URL }}

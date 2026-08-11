@@ -1,0 +1,19 @@
+[Unit]
+Description=Tashkent apartments scraper (один прогон)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=scraper
+WorkingDirectory=/opt/tashkent-apartments-v2/scraper
+EnvironmentFile=/opt/tashkent-apartments-v2/scraper/.env
+ExecStart=/usr/bin/node src/run.js
+
+# Если прогон подвиснет дольше 10 минут — что-то не так, лучше
+# убить и подождать следующего тика таймера, чем копить зависшие
+# процессы.
+TimeoutStartSec=600
+
+# Логи идут в journalctl автоматически (StandardOutput/Error по
+# умолчанию — journal). Смотреть: journalctl -u tashkent-scraper -f

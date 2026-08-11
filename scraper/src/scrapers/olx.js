@@ -73,16 +73,38 @@ const DATE_META_RE = /(сегодня|вчера)\s*(?:в\s*\d{1,2}:\d{2})?|(\d{
  * @param {'rent'|'sale'} dealType
  * @param {'apartment'|'house'|'commercial'} propertyType
  */
+// Общие заголовки для всех запросов к olx.uz — раньше в разных местах
+// файла были разные (местами совсем куцые, например голый
+// 'Mozilla/5.0' без остального на странице объявления), что могло
+// увеличивать шанс попасть под анти-бот эвристику. Теперь одинаковые
+// везде и максимально похожи на настоящий Chrome.
+const OLX_BROWSER_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Accept-Encoding': 'gzip, deflate, br',
+  Referer: 'https://www.olx.uz/',
+  'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"Windows"',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'same-origin',
+  'Upgrade-Insecure-Requests': '1',
+};
+
 export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartment') {
   const url = OLX_CATEGORIES[propertyType][dealType];
-  const { data: html } = await getWithRetry(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      'Accept-Language': 'ru-RU,ru;q=0.9',
+  const { data: html } = await getWithRetry(
+    url,
+    {
+      headers: OLX_BROWSER_HEADERS,
+      timeout: 15000,
     },
-    timeout: 15000,
-  });
+    3,
+    true // useProxy — см. http.js: список объявлений это то, что бьётся 403 всю ночь
+  );
 
   const $ = cheerio.load(html);
   const seen = new Map(); // externalId -> listing, чтобы не дублировать
@@ -216,12 +238,24 @@ function parseJsonLd($) {
 }
 
 export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
-  const { data: html } = await getWithRetry(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-    timeout: 15000,
-  });
+  const { data: html } = await getWithRetry(
+    url,
+    {
+      headers: OLX_BROWSER_HEADERS,
+      timeout: 15000,
+    },
+    3,
+    true // useProxy
+  );
   const $ = cheerio.load(html);
-  const description = $('[data-cy="ad_description"]').text().trim();
+  // Как и с заголовком в fetchOlxListings — OLX иногда вставляет scoped
+  // <style> прямо внутрь блока описания, и без удаления этих тегов
+  // .text() затягивает CSS-код (например ".css-1f8vyal{...}") прямо в
+  // текст описания, который потом уходит в базу и показывается на
+  // сайте (см. баг с мусорным CSS в карточках объявлений).
+  const descriptionEl = $('[data-cy="ad_description"]').clone();
+  descriptionEl.find('style, script').remove();
+  const description = descriptionEl.text().trim();
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
   const jsonLd = parseJsonLd($);
@@ -464,8 +498,9 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
   try {
     const { data: html } = await getWithRetry(
       sellerListingsUrl,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 },
-      2
+      { headers: OLX_BROWSER_HEADERS, timeout: 15000 },
+      2,
+      true // useProxy
     );
     const $ = cheerio.load(html);
 
@@ -524,7 +559,8 @@ export async function fetchOlxPhone(offerId) {
         },
         timeout: 10000,
       },
-      2
+      2,
+      true // useProxy
     );
     return data?.data?.phones?.[0] || null;
   } catch (err) {

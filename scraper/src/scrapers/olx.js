@@ -222,6 +222,7 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
   });
   const $ = cheerio.load(html);
   const description = $('[data-cy="ad_description"]').text().trim();
+  const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
   const jsonLd = parseJsonLd($);
   const offerId = jsonLd?.sku || null;
@@ -434,6 +435,7 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     locationDistrict,
     phone,
     ldPrice,
+    imageUrl,
   };
 }
 

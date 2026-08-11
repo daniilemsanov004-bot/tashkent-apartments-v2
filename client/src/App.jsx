@@ -42,6 +42,20 @@ function shortAssignee(v) {
   return v.includes('@') ? v.split('@')[0] : v;
 }
 
+// raw_text — это "заголовок\nописание"; показываем только то, что после
+// заголовка, и обрезаем — на карточке это просто краткая выдержка, а не
+// полный текст объявления.
+function descriptionExcerpt(listing) {
+  if (!listing.raw_text) return null;
+  let text = listing.raw_text;
+  if (listing.title && text.startsWith(listing.title)) {
+    text = text.slice(listing.title.length);
+  }
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > 170 ? `${text.slice(0, 170).trim()}…` : text;
+}
+
 // ---------- Выпадающий мультивыбор районов ----------
 
 function DistrictFilter({ selected, onChange }) {
@@ -101,6 +115,8 @@ const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted,
 
   const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState(listing.notes || '');
+  const excerpt = descriptionExcerpt(listing);
+  const [imgFailed, setImgFailed] = useState(false);
 
   // Если заметку поменяли где-то ещё (Telegram / другой человек) и мы
   // сейчас её не редактируем — подхватываем новое значение.
@@ -124,6 +140,15 @@ const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted,
           onChange={() => onToggleSelect(listing.id)}
           aria-label="Выбрать объявление"
         />
+        {listing.image_url && !imgFailed && (
+          <img
+            className="card-thumb"
+            src={listing.image_url}
+            alt=""
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        )}
         <div className="card-main">
           <p className="card-title">
             <a href={listing.url} target="_blank" rel="noreferrer">{listing.title}</a>
@@ -136,6 +161,7 @@ const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted,
             {listing.district ? ` · ${listing.district}` : ''}
             {listing.assigned_to ? ` · Взял: ${shortAssignee(listing.assigned_to)}` : ''}
           </p>
+          {excerpt && <p className="card-excerpt">{excerpt}</p>}
           {editingNote ? (
             <input
               autoFocus

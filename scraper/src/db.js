@@ -90,6 +90,31 @@ export async function markTelegramDeleted(id) {
 }
 
 /**
+ * Считает, сколько ДРУГИХ объявлений в базе уже имеют этот же
+ * (нормализованный) номер телефона — сильный сигнал агента: частник
+ * крайне редко выставляет несколько РАЗНЫХ объявлений под одним и тем
+ * же номером, а агентство/риелтор — постоянно (один контакт на много
+ * объектов). Не зависит от вёрстки сайтов вообще — работает, даже
+ * если завтра OLX/Uybor/Realting поменяют HTML.
+ * @param {string|null} phoneNormalized — уже нормализованный номер (см. phone.js), не сырой
+ * @param {string} excludeId — id текущего объявления, чтобы не считать само себя
+ * @returns {Promise<number>} 0, если номера нет или произошла ошибка (при сбое не блокируем — лучше пропустить проверку, чем ошибочно посчитать всех агентами)
+ */
+export async function countListingsByPhone(phoneNormalized, excludeId) {
+  if (!phoneNormalized) return 0;
+  const { count, error } = await supabase
+    .from('listings')
+    .select('id', { count: 'exact', head: true })
+    .eq('phone_normalized', phoneNormalized)
+    .neq('id', excludeId);
+  if (error) {
+    console.error('Supabase (countListingsByPhone) ошибка:', error.message);
+    return 0;
+  }
+  return count || 0;
+}
+
+/**
  * Возвращает message_thread_id темы для пары (groupKey, district),
  * или null, если такой темы ещё нет (тогда сообщение уйдёт в общую
  * тему группы без привязки к теме).

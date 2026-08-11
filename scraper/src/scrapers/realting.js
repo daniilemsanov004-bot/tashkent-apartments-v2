@@ -199,5 +199,7 @@ export async function fetchRealtingDetails(url) {
     $('[class*="agent-name"]').first().text().trim() ||
     null;
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl: null };
+  const imageUrl = $('meta[property="og:image"]').attr('content') || null;
+
+  return { description, sellerName: sellerName || null, sellerListingsUrl: null, imageUrl };
 }

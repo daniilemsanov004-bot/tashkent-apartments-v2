@@ -182,6 +182,16 @@ export async function fetchUyborListings(dealType = 'rent') {
     // каноничному названию.
     const rawDistrict = localized(item.district?.name) || null;
 
+    // media уже запрашивается через embed=media (см. UYBOR_API выше),
+    // просто раньше это поле нигде не читалось. Точный формат объекта
+    // media НЕ подтверждён вживую — пробуем несколько вероятных
+    // вариантов полей; если ни один не сработает, просто не будет
+    // картинки у Uybor-объявлений (не критично, не блокирует остальное).
+    const imageUrl = extractUyborImage(item);
+    if (item === items[0]) {
+      console.log(`[uybor-${dealType}] media первого объявления:`, JSON.stringify(item.media || null).slice(0, 400));
+    }
+
     listings.push({
       id: `uybor_${id}`,
       source: 'uybor',
@@ -197,10 +207,26 @@ export async function fetchUyborListings(dealType = 'rent') {
       seller_is_organization: sellerIsOrganization,
       seller_name: sellerName,
       raw_district: rawDistrict,
+      image_url: imageUrl,
     });
   }
 
   return listings;
+}
+
+/**
+ * media от Uybor API — формат не подтверждён вживую, пробуем несколько
+ * вероятных структур (массив строк / массив объектов с url|path|src).
+ * Относительные пути достраиваем до полного URL.
+ */
+function extractUyborImage(item) {
+  const media = item.media || item.images || item.photos;
+  if (!Array.isArray(media) || media.length === 0) return null;
+  const first = media[0];
+  const candidate = typeof first === 'string' ? first : first?.url || first?.path || first?.src || first?.image || null;
+  if (!candidate) return null;
+  if (candidate.startsWith('http')) return candidate;
+  return `https://api.uybor.uz${candidate.startsWith('/') ? '' : '/'}${candidate}`;
 }
 
 /**

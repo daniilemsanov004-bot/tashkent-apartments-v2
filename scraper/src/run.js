@@ -4,10 +4,21 @@ import { fetchUyborListings, fetchUyborDetails } from './scrapers/uybor.js';
 import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting.js';
 import { classifyListing, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
 import { notifyAlert, notifyToTopicGroup } from './telegram.js';
-import { isKnown, saveListing, markNotified } from './db.js';
+import { isKnown, saveListing, markNotified, countListingsByPhone } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
 import { cleanAgentBacklog } from './cleanAgentMessages.js';
+import { findAgentTextSignal } from './agentSignals.js';
+import { normalizePhone } from './phone.js';
+
+// Сколько ДРУГИХ объявлений с тем же номером телефона считаем
+// подозрительным порогом (см. countListingsByPhone в db.js). Не 0
+// (одна штука), потому что частник иногда честно перевыкладывает ТУ
+// ЖЕ квартиру повторно, если её долго не покупают/не снимают — это
+// нормально и не должно клеймить его агентом. От 2 прежних объявлений
+// с одним номером — уже гораздо больше похоже на агентство, чем на
+// повторную публикацию одного и того же объекта.
+const PHONE_REUSE_AGENT_THRESHOLD = 2;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 
@@ -58,6 +69,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let sellerListingsUrl = null;
     let authorAdsCountHint = null;
     let sellerNameLooksLikeAgent = false;
+    let detailsFetchFailed = false;
     try {
       const details = await fetchDetails(item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
@@ -97,13 +109,17 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // raw_district уже выставлен на этапе списка (fetchUyborListings),
       // так что тут его не перезаписываем.
       if (details?.locationDistrict && !item.raw_district) item.raw_district = details.locationDistrict;
+      if (details?.imageUrl && !item.image_url) item.image_url = details.imageUrl;
     } catch (err) {
+      detailsFetchFailed = true;
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
     }
 
     const phoneMatch = rawText.match(PHONE_REGEX);
     const phoneFromText = phoneMatch ? phoneMatch[1] : null;
     const phoneFromApi = item.phone_from_api || null;
+    const effectivePhone = item.phone_from_details || phoneFromApi || phoneFromText;
+    const phoneNormalized = normalizePhone(effectivePhone);
 
     // Жёсткие правила (без ИИ, бесплатно), два источника — свои для
     // каждого сайта:
@@ -126,29 +142,70 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       confirmedAgentReason = `имя/аватарка продавца ("${sellerName}") — риэлтор/агентство`;
     }
 
+    // Проверка текста самого объявления на агентские слова
+    // ("агентство", "риелтор", "комиссия" без "без комиссии" и т.п.,
+    // см. agentSignals.js). Не зависит от сайта/вёрстки вообще —
+    // работает даже если fetchDetails выше упал и остался только
+    // заголовок (rawText = item.title по умолчанию).
+    if (!isConfirmedAgent) {
+      const textSignal = findAgentTextSignal(rawText);
+      if (textSignal) {
+        isConfirmedAgent = true;
+        confirmedAgentReason = `текст объявления содержит "${textSignal}"`;
+      }
+    }
+
+    // Проверка "этот же номер телефона уже был на других
+    // объявлениях" — тоже не зависит от сайта/вёрстки, работает по
+    // своей же базе. Порог см. PHONE_REUSE_AGENT_THRESHOLD выше.
+    if (!isConfirmedAgent && phoneNormalized) {
+      const priorCount = await countListingsByPhone(phoneNormalized, item.id);
+      if (priorCount >= PHONE_REUSE_AGENT_THRESHOLD) {
+        isConfirmedAgent = true;
+        confirmedAgentReason = `тот же номер телефона уже на ${priorCount} других объявлениях`;
+      }
+    }
+
+    // Не смогли ни одним способом посчитать число объявлений
+    // продавца — либо реальный сбой сети/блокировки сайта (см.
+    // detailsFetchFailed и историю с OLX 403 от 11.08.2026), либо OLX
+    // поменял вёрстку. Раньше в этом случае ни одна проверка на
+    // агента реально не срабатывала, а объявление всё равно уходило
+    // с меткой "Скорее всего собственник" — из-за этого иногда
+    // проскакивали продавцы с кучей объявлений: проверка молча не
+    // отрабатывала, а не "честно проверила и не нашла agenтства".
+    // Теперь такие случаи ниже (после isConfirmedOwner) не
+    // отправляются вообще, а откладываются до следующего прогона.
+    let sellerCheckUnavailable = false;
+
     if (!isConfirmedAgent && fetchSellerCount && sellerListingsUrl) {
       sellerListingsCount = await fetchSellerCount(sellerListingsUrl);
       if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
         confirmedAgentReason = `${sellerListingsCount} объявлений`;
-      } else if (sellerListingsCount === null && authorAdsCountHint !== null) {
+      } else if (sellerListingsCount === null) {
         // Основная проверка не удалась (страница профиля не открылась/
-        // не распарсилась) — используем число со страницы самого
-        // объявления как запасной, менее точный сигнал (может включать
-        // не только недвижимость, поэтому берём порог с запасом заметно
-        // выше основного, чтобы не наступить на старый баг "все подряд
-        // считаются агентом").
-        if (authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
+        // не распарсилась/заблокирована) — используем число со страницы
+        // самого объявления как запасной, менее точный сигнал (может
+        // включать не только недвижимость, поэтому берём порог с
+        // запасом заметно выше основного).
+        if (authorAdsCountHint !== null && authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
           isConfirmedAgent = true;
           confirmedAgentReason = `~${authorAdsCountHint} объявлений (со страницы, точная проверка не удалась)`;
+        } else if (authorAdsCountHint === null) {
+          // И основная проверка не удалась, И запасного числа нет —
+          // вообще ничего не смогли выяснить про продавца.
+          sellerCheckUnavailable = true;
         }
       }
-    } else if (fetchSellerCount && !sellerListingsUrl && authorAdsCountHint !== null) {
+    } else if (fetchSellerCount && !sellerListingsUrl) {
       // Ссылку на профиль вообще не нашли (см. warn выше) — тот же
       // запасной сигнал, что и в ветке выше.
-      if (authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
+      if (authorAdsCountHint !== null && authorAdsCountHint > SELLER_LISTINGS_AGENT_THRESHOLD * 2) {
         isConfirmedAgent = true;
         confirmedAgentReason = `~${authorAdsCountHint} объявлений (со страницы, ссылка на профиль не найдена)`;
+      } else if (!isConfirmedAgent && authorAdsCountHint === null) {
+        sellerCheckUnavailable = true;
       }
     }
     if (!isConfirmedAgent && item.seller_is_organization) {
@@ -165,6 +222,21 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // карточке / выделенная страница "от собственников") — доверяем
     // этому напрямую, не тратя вызов ИИ-классификации.
     const isConfirmedOwner = !isConfirmedAgent && item.source === 'realting';
+
+    if (!isConfirmedAgent && !isConfirmedOwner && sellerCheckUnavailable) {
+      // Пропускаем ВЕСЬ этот прогон для объявления — не сохраняем и не
+      // отправляем. isKnown() на следующем прогоне (через 15 минут)
+      // снова увидит его как новое и попробует проверить продавца с
+      // нуля. Пока OLX блокирует запросы (403), это означает, что
+      // объявления с этого источника вообще перестанут приходить в
+      // Telegram, пока блокировка не снимется/не будет починена — это
+      // осознанный компромисс: лучше молчание, чем непроверенные
+      // объявления с уверенной меткой "собственник".
+      console.warn(
+        `[${sourceLabel}] пропускаю — не удалось проверить продавца ни одним способом (сеть/блокировка/вёрстка сайта): ${item.url}`
+      );
+      continue;
+    }
 
     let classification;
     let label;
@@ -257,7 +329,8 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       price_currency: priceCurrency,
       rooms: classification.rooms,
       area: classification.area,
-      phone: item.phone_from_details || phoneFromApi || phoneFromText,
+      phone: effectivePhone,
+      phone_normalized: phoneNormalized,
       seller_type: classification.seller_type,
       confidence: classification.confidence,
       label_text: label.text,

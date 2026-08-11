@@ -418,13 +418,18 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
   }
 }
 
-// OLX: квартиры + дома + коммерция. Uybor пока только квартиры — для
-// домов/коммерции у Uybor нужны их внутренние category__eq ID (сейчас
-// известен только id=7 для квартир), см. TODO в scrapers/uybor.js.
+// OLX: квартиры + дома + коммерция.
+// Uybor: квартиры + дома + коммерция — category__eq ID подтверждены
+// вживую 11.08.2026 через GET api.uybor.uz/api/v1/listings/categories
+// (apartment=7, house=8, commercial=10), см. CATEGORY_BY_PROPERTY_TYPE
+// в scrapers/uybor.js. Фильтр "только собственники" (detectAgentRole)
+// общий для всех типов, отдельно на house/commercial настраивать не
+// нужно.
 // Realting: квартиры + дома + коммерция, продажа и аренда (для
 // продажи используются готовые /fsbo-страницы сайта, для аренды —
 // фильтрация по метке "Частный продавец" внутри scrapers/realting.js).
 const OLX_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
+const UYBOR_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 const REALTING_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 // Joymee: квартиры/дома/коммерция для ПРОДАЖИ И АРЕНДЫ — все 6
 // комбинаций подтверждены вживую (11.08.2026, см. JOYMEE_CATEGORY в
@@ -437,7 +442,9 @@ async function main() {
     await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale', fetchOlxSellerListingsCount, propertyType);
     await olxDelay();
   }
-  await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale');
+  for (const propertyType of UYBOR_PROPERTY_TYPES) {
+    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale', null, propertyType);
+  }
   for (const propertyType of REALTING_PROPERTY_TYPES) {
     await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType);
   }
@@ -455,7 +462,9 @@ async function main() {
     await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent', fetchOlxSellerListingsCount, propertyType);
     await olxDelay();
   }
-  await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent');
+  for (const propertyType of UYBOR_PROPERTY_TYPES) {
+    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent', null, propertyType);
+  }
   for (const propertyType of REALTING_PROPERTY_TYPES) {
     await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType);
   }

@@ -6,14 +6,19 @@ import { getWithRetry } from '../http.js';
 const UYBOR_API = 'https://api.uybor.uz/api/v1/listings';
 
 const REGION_TASHKENT = 13;
-const CATEGORY_APARTMENTS = 7;
 
-// TODO: узнать category__eq для "Дома" и "Коммерция" на uybor.uz —
-// открыть сайт → DevTools → Network → XHR, выбрать эти категории в
-// фильтре и посмотреть параметр category__eq в запросе к
-// api.uybor.uz/api/v1/listings. Как только известны — добавить сюда
-// по аналогии с CATEGORY_APARTMENTS и завести fetchUyborListings(dealType,
-// propertyType) так же, как уже сделано в scrapers/olx.js.
+// Подтверждено вживую 11.08.2026 через GET api.uybor.uz/api/v1/listings/categories
+// (полный список категорий сайта). Дом (id=8) и "Для бизнеса" (id=10) —
+// это ВЕРХНЕУРОВНЕВЫЕ категории, у каждой есть свои подкатегории
+// (Дом → Частный дом/Дача/Коттедж; Для бизнеса → Офис/Склад/Производство/
+// Готовый бизнес/Здание), но в фильтре на сайте выбор идёт именно по
+// этим родительским ID одним пунктом ("Дом", "Для бизнеса") — как и с
+// квартирами, поэтому используем ID родителя напрямую.
+const CATEGORY_BY_PROPERTY_TYPE = {
+  apartment: 7,
+  house: 8,
+  commercial: 10,
+};
 
 /**
  * Uybor отдаёt некоторые текстовые поля (в т.ч. похоже, title) не
@@ -108,15 +113,22 @@ function isToday(dateStr) {
 
 /**
  * @param {'rent'|'sale'} dealType
+ * @param {'apartment'|'house'|'commercial'} propertyType
  */
-export async function fetchUyborListings(dealType = 'rent') {
+export async function fetchUyborListings(dealType = 'rent', propertyType = 'apartment') {
+  const categoryId = CATEGORY_BY_PROPERTY_TYPE[propertyType];
+  if (!categoryId) {
+    console.warn(`[uybor] неизвестный propertyType "${propertyType}", пропускаю`);
+    return [];
+  }
+
   const { data } = await getWithRetry(UYBOR_API, {
     params: {
       mode: 'search',
       limit: 30,
       order: 'upAt',
       operationType__eq: dealType,
-      category__eq: CATEGORY_APARTMENTS,
+      category__eq: categoryId,
       region__eq: REGION_TASHKENT,
       embed: 'media,user,district,region',
     },
@@ -132,15 +144,15 @@ export async function fetchUyborListings(dealType = 'rent') {
   // data.data, а в другом поле.
   const items = data?.data || data?.items || data?.results || (Array.isArray(data) ? data : []);
 
-  console.log(`[uybor-${dealType}] получено ${items.length} объявлений от API`);
+  console.log(`[uybor-${propertyType}-${dealType}] получено ${items.length} объявлений от API`);
   if (items[0]) {
     // Debug-лог первого объявления целиком — если какие-то поля ниже
     // окажутся пустыми/неверными, этот вывод покажет реальную структуру,
     // и поля будет легко поправить.
-    console.log(`[uybor-${dealType}] пример сырого объявления:`, JSON.stringify(items[0]).slice(0, 1200));
+    console.log(`[uybor-${propertyType}-${dealType}] пример сырого объявления:`, JSON.stringify(items[0]).slice(0, 1200));
     // Отдельно логируем именно user — это где живёт роль
     // ("Риелтор"/"Агент"), которую мы сейчас пытаемся поймать.
-    console.log(`[uybor-${dealType}] user первого объявления:`, JSON.stringify(items[0].user || null));
+    console.log(`[uybor-${propertyType}-${dealType}] user первого объявления:`, JSON.stringify(items[0].user || null));
   }
 
   const listings = [];
@@ -172,7 +184,7 @@ export async function fetchUyborListings(dealType = 'rent') {
     const orgName = localized(item.user?.organization?.name) || localized(item.user?.organization?.title) || null;
     const sellerName = orgName || item.user?.name || item.user?.fullName || null;
     if (sellerIsOrganization) {
-      console.log(`[uybor-${dealType}] продавец "${sellerName || '?'}" помечен как риелтор/агентство (${sellerRoleText})`);
+      console.log(`[uybor-${propertyType}-${dealType}] продавец "${sellerName || '?'}" помечен как риелтор/агентство (${sellerRoleText})`);
     }
 
     // Uybor отдаёт район структурно (через ?embed=district) — самый
@@ -189,14 +201,14 @@ export async function fetchUyborListings(dealType = 'rent') {
     // картинки у Uybor-объявлений (не критично, не блокирует остальное).
     const imageUrl = extractUyborImage(item);
     if (item === items[0]) {
-      console.log(`[uybor-${dealType}] media первого объявления:`, JSON.stringify(item.media || null).slice(0, 400));
+      console.log(`[uybor-${propertyType}-${dealType}] media первого объявления:`, JSON.stringify(item.media || null).slice(0, 400));
     }
 
     listings.push({
       id: `uybor_${id}`,
       source: 'uybor',
       deal_type: dealType,
-      property_type: 'apartment', // пока только квартиры, см. TODO выше
+      property_type: propertyType,
       // Точный формат URL объявления на uybor.uz не подтверждён —
       // если ссылка окажется нерабочей, поправить тут после проверки.
       url: `https://uybor.uz/listings/${id}`,

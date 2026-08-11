@@ -146,3 +146,66 @@ export async function saveTopicId(groupKey, district, messageThreadId) {
     console.error('Supabase (saveTopicId) ошибка:', error.message);
   }
 }
+
+// ---------- Рыночная статистика цены за м² (см. marketStats.js) ----------
+
+/**
+ * Объявления за последние N дней с уже посчитанной ценой за м²,
+ * исключая агентства (иначе накрутка агентствами через несколько
+ * объявлений на один и тот же объект искажает медиану). Собственный
+ * список полей — только то, что реально нужно для группировки, чтобы
+ * не тащить лишнее (raw_text и т.п.) на потенциально тысячах строк.
+ */
+export async function getStatsSourceListings(days) {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('listings')
+    .select('price_per_sqm, district, property_type, deal_type, price_currency')
+    .gte('created_at', cutoff)
+    .not('price_per_sqm', 'is', null)
+    .in('label_kind', ['owner', 'unchecked']);
+  if (error) {
+    console.error('Supabase (getStatsSourceListings) ошибка:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Перезаписывает медианы по группам (upsert по group_key — старое
+ * значение группы просто заменяется свежим, ничего не копится).
+ */
+export async function upsertMarketStats(rows) {
+  const payload = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
+  const { error } = await supabase.from('market_stats').upsert(payload, { onConflict: 'group_key' });
+  if (error) {
+    console.error('Supabase (upsertMarketStats) ошибка:', error.message);
+  }
+}
+
+/**
+ * @returns {Promise<string|null>} updated_at самой свежей группы, или
+ *   null, если таблица ещё пустая (тогда пересчёт точно нужен).
+ */
+export async function getMarketStatsFreshness() {
+  const { data, error } = await supabase
+    .from('market_stats')
+    .select('updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error('Supabase (getMarketStatsFreshness) ошибка:', error.message);
+    return null;
+  }
+  return data?.updated_at ?? null;
+}
+
+export async function getAllMarketStats() {
+  const { data, error } = await supabase.from('market_stats').select('group_key, median_price_per_sqm, sample_size');
+  if (error) {
+    console.error('Supabase (getAllMarketStats) ошибка:', error.message);
+    return [];
+  }
+  return data || [];
+}

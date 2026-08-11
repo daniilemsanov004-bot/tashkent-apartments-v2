@@ -37,13 +37,14 @@ export default async function handler(req, res) {
   todayCutoff.setHours(0, 0, 0, 0);
 
   try {
-    const [totalRes, todayRes, ownersRes, notContactedRes] = await Promise.all([
+    const [totalRes, todayRes, ownersRes, notContactedRes, dealsRes] = await Promise.all([
       base(),
       base().gte('created_at', todayCutoff.toISOString()),
       base().in('label_kind', ['owner', 'unchecked']),
       base().neq('contacted', true),
+      base().eq('below_market', true), // см. scraper/src/marketStats.js
     ]);
-    for (const r of [totalRes, todayRes, ownersRes, notContactedRes]) {
+    for (const r of [totalRes, todayRes, ownersRes, notContactedRes, dealsRes]) {
       if (r.error) throw new Error(r.error.message);
     }
     res.status(200).json({
@@ -51,6 +52,7 @@ export default async function handler(req, res) {
       today: todayRes.count ?? 0,
       owners: ownersRes.count ?? 0,
       notContacted: notContactedRes.count ?? 0,
+      deals: dealsRes.count ?? 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

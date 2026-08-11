@@ -34,13 +34,26 @@ export default async function handler(req, res) {
 
   let query = supabase.from('listings').select('*', { count: 'exact' });
 
-  const sort = req.query.sort; // 'new' (по умолчанию) | 'price_asc' | 'price_desc'
+  const sort = req.query.sort; // 'new' (по умолчанию) | 'price_asc' | 'price_desc' | 'deal_pct'
   if (sort === 'price_asc') {
     query = query.order('price_value', { ascending: true, nullsFirst: false });
   } else if (sort === 'price_desc') {
     query = query.order('price_value', { ascending: false, nullsFirst: false });
+  } else if (sort === 'deal_pct') {
+    // Самые выгодные (сильнее всего ниже рыночной цены/м²) — первыми.
+    // См. below_market_pct в scraper/src/marketStats.js.
+    query = query.order('below_market_pct', { ascending: false, nullsFirst: false });
   } else {
     query = query.order('created_at', { ascending: false });
+  }
+
+  // Раздел "🔥 Выгодные" на сайте — только объявления заметно ниже
+  // рыночной цены/м² (below_market проставляется скрапером, см.
+  // scraper/src/marketStats.js). Остальные фильтры (район, тип,
+  // цена и т.п.) продолжают применяться поверх этого же запроса —
+  // это не отдельная страница с своим API, а сужение того же запроса.
+  if (req.query.deals === 'true') {
+    query = query.eq('below_market', true);
   }
 
   if (days !== null) {
@@ -114,7 +127,7 @@ export default async function handler(req, res) {
 
   const total = count ?? data.length;
   res.status(200).json({
-    items: sort === 'price_asc' || sort === 'price_desc' ? data : sortByPriority(data),
+    items: sort === 'price_asc' || sort === 'price_desc' || sort === 'deal_pct' ? data : sortByPriority(data),
     total,
     hasMore: from + data.length < total,
   });

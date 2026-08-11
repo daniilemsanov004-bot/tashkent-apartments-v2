@@ -21,6 +21,11 @@
   --owner-wash: rgba(127,174,134,0.14);
   --danger: #c1684a;
   --danger-wash: rgba(193,104,74,0.13);
+  /* "Выгодные" (ниже рынка) — тёплый янтарно-красный, отдельный от
+     --gold (обычный акцент) и --danger (предупреждение об агенте),
+     чтобы 🔥-бейдж на карточке считывался с одного взгляда. */
+  --deal: #e08a3e;
+  --deal-wash: rgba(224,138,62,0.14);
   --radius: 10px;
 }
 *{ box-sizing:border-box; }
@@ -107,11 +112,15 @@ select:focus{ outline:none; border-color:var(--gold); }
   opacity:0.55;
 }
 .stat.stat-owner::after{ background:linear-gradient(90deg, var(--owner), transparent 75%); opacity:0.8; }
+.stat.stat-deal::after{ background:linear-gradient(90deg, var(--deal), transparent 75%); opacity:0.85; }
 .stat .num{
   font-size:1.7rem; font-weight:600;
   font-variant-numeric:tabular-nums; color:var(--text);
 }
 .stat.stat-owner .num{ color:var(--owner); }
+.stat.stat-deal .num{ color:var(--deal); }
+.stat.stat-deal{ cursor:pointer; }
+.stat.stat-deal:hover{ border-color:var(--deal); }
 .stat .label{ font-size:11.5px; color:var(--text-faint); margin-top:2px; letter-spacing:0.02em; }
 
 /* ---- Лента ---- */
@@ -174,6 +183,18 @@ select:focus{ outline:none; border-color:var(--gold); }
 .badge-unsure{ background:rgba(193,104,74,0.1); color:#cf8a6c; border-color:rgba(193,104,74,0.25); }
 .badge-unchecked{ background:var(--surface-2); color:var(--text-faint); border-color:var(--border); }
 .badge-agent{ background:var(--danger-wash); color:var(--danger); border-color:rgba(193,104,74,0.3); }
+
+/* Строка "🔥 На X% ниже рынка" / "⚡ срочно" под шапкой карточки — см.
+   below_market/urgency_signal (scraper/src/marketStats.js,
+   urgencySignals.js). */
+.card-deal-line{ margin:6px 0 0; display:flex; gap:6px; flex-wrap:wrap; }
+.deal-badge{
+  font-size:11.5px; padding:3px 9px; border-radius:100px;
+  font-weight:600; background:var(--deal-wash); color:var(--deal);
+  border:1px solid rgba(224,138,62,0.3); white-space:nowrap;
+}
+.deal-badge-urgency{ background:var(--gold-wash); color:var(--gold-bright); border-color:rgba(193,157,90,0.3); }
+
 .card-bottom{
   display:flex; justify-content:space-between; align-items:center;
   margin-top:0.85rem; padding-top:0.85rem; border-top:1px solid var(--border-soft);

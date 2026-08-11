@@ -92,10 +92,21 @@ function buildMessagePayload(listing) {
           ? '🏢 Похоже на агентство'
           : '❓ Сомнительно — проверьте сами';
 
+  // Строка про цену за м² и отклонение от медианы по району/городу —
+  // показываем и в обычном уведомлении, и в теме "Выгодные" (см.
+  // notifyDeal), чтобы было видно НАСКОЛЬКО ниже рынка, а не только
+  // сам факт. Для не-below_market объявлений с известной ценой/м² эту
+  // строку не показываем — незачем засорять обычные уведомления.
+  const belowMarketLine = listing.below_market
+    ? `🔥 На ${listing.below_market_pct}% ниже рыночной цены/м² (по ${listing.market_sample_size} объявл. в округе)\n`
+    : '';
+  const urgencyLine = listing.urgency_signal ? `⚡ В тексте: «${listing.urgency_phrase}»\n` : '';
+
   const message =
     `🏠 Новое объявление (${listing.source})\n` +
     `${badge}\n\n` +
-    dealLine +
+    belowMarketLine +
+    urgencyLine +
     typeLine +
     `${roomsLine}${listing.title}${areaLine}\n` +
     `💰 ${listing.price || 'цена не указана'}\n` +
@@ -162,6 +173,13 @@ export const TOPIC_GROUPS = {
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
   commercial_rent: (process.env.TELEGRAM_GROUP_COMMERCIAL_RENT || '').trim(),
   house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
+  // Отдельная супергруппа для объявлений "ниже рынка" (см.
+  // marketStats.js) — общая для всех типов недвижимости, темы внутри
+  // неё по-прежнему по району (см. notifyDeal ниже). Не участвует в
+  // resolveGroupKey()/notifyToTopicGroup() — их логика только про
+  // "куда объявление уходит по умолчанию", а сюда объявления уходят
+  // ДОПОЛНИТЕЛЬНО, см. вызов notifyDeal() в run.js.
+  deals: (process.env.TELEGRAM_GROUP_DEALS || '').trim(),
 };
 
 /**
@@ -211,6 +229,35 @@ export async function notifyToTopicGroup(listing) {
     return { chatId: String(sent.chat.id), messageId: sent.message_id };
   } catch (err) {
     console.error(`Не удалось отправить в тематическую супергруппу (${groupKey}):`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Дублирует объявление в супергруппу "Выгодные" (TELEGRAM_GROUP_DEALS),
+ * в тему своего района внутри неё — используется ТОЛЬКО для
+ * listing.below_market (см. вызов в run.js). Отдельная функция, а не
+ * переиспользование notifyToTopicGroup(), потому что groupKey тут
+ * всегда 'deals' независимо от property_type/deal_type объявления —
+ * это не альтернативная классификация по типу, а отдельный сквозной
+ * фильтр поверх всех типов сразу.
+ */
+export async function notifyDeal(listing) {
+  const targetChatId = TOPIC_GROUPS.deals;
+  if (!bot || !targetChatId) return null;
+
+  const { message, buttons } = buildMessagePayload(listing);
+  const messageThreadId = await getTopicId('deals', listing.district);
+
+  try {
+    const sent = await bot.sendMessage(targetChatId, message, {
+      disable_web_page_preview: false,
+      reply_markup: { inline_keyboard: buttons },
+      ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
+    });
+    return { chatId: String(sent.chat.id), messageId: sent.message_id };
+  } catch (err) {
+    console.error('Не удалось отправить в супергруппу "Выгодные":', err.message);
     return null;
   }
 }

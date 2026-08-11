@@ -72,7 +72,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     return;
   }
 
-  console.log(`[${sourceLabel}] найдено ${items.length} объявлений (сегодняшних) на странице`);
+  console.log(`[${sourceLabel}] найдено ${items.length} объявлений (за 2 дня) на странице`);
   if (items.length === 0) return;
 
   // Счётчики для само-диагностики этого прогона — цель: если сайт

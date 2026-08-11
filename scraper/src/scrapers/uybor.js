@@ -101,14 +101,19 @@ function detectAgentRole(item) {
   return { isAgent: false, roleText: null };
 }
 
-// Сегодняшняя дата — фильтруем так же, как и OLX, чтобы не тащить
-// в базу старые объявления, поднятые платным продвижением.
-function isToday(dateStr) {
+// Дата публикации — фильтруем так же, как и OLX (см. RECENT_RE в
+// olx.js): "сегодня" И "вчера", а не только сегодня — двухдневное
+// окно, решение от 12.08.2026, снижает риск пропустить объявление
+// из-за задержки/сбоя прогона скрапера (раз в 15 минут).
+function isRecent(dateStr) {
   if (!dateStr) return true; // не нашли дату — лучше показать, чем упустить
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return true;
   const now = new Date();
-  return d.toDateString() === now.toDateString();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - 1); // начало вчерашнего дня
+  cutoff.setHours(0, 0, 0, 0);
+  return d >= cutoff;
 }
 
 /**
@@ -158,7 +163,7 @@ export async function fetchUyborListings(dealType = 'rent', propertyType = 'apar
   const listings = [];
   for (const item of items) {
     const postedRaw = item.upAt || item.createDate || item.updateDate || '';
-    if (!isToday(postedRaw)) continue;
+    if (!isRecent(postedRaw)) continue;
 
     const id = item.id ?? item._id;
     if (!id) continue;

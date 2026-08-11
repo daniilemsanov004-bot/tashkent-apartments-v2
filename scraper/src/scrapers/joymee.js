@@ -113,16 +113,19 @@ const JOYMEE_CATEGORY = {
 // (10), чтобы не выглядеть подозрительно на фоне обычного трафика.
 const JOYMEE_PER_PAGE = 10;
 
-// Фильтруем только сегодняшние объявления — тот же принцип, что у
-// OLX/Uybor: не тащим в базу старые объявления, поднятые платным
-// продвижением. Поле с датой публикации — "ads_at" (подтверждено и в
+// Фильтруем "сегодня" И "вчера" — тот же принцип, что у OLX/Uybor (см.
+// RECENT_RE в olx.js), двухдневное окно вместо одного дня, решение от
+// 12.08.2026. Поле с датой публикации — "ads_at" (подтверждено и в
 // списке, и в деталях).
-function isToday(dateStr) {
+function isRecent(dateStr) {
   if (!dateStr) return true;
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return true;
   const now = new Date();
-  return d.toDateString() === now.toDateString();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - 1); // начало вчерашнего дня
+  cutoff.setHours(0, 0, 0, 0);
+  return d >= cutoff;
 }
 
 /**
@@ -173,7 +176,7 @@ export async function fetchJoymeeListings(dealType = 'rent', propertyType = 'apa
   const listings = [];
   for (const item of items) {
     const postedRaw = item.ads_at || '';
-    if (!isToday(postedRaw)) continue;
+    if (!isRecent(postedRaw)) continue;
 
     const id = item.id;
     if (!id) continue;

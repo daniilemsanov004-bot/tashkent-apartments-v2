@@ -52,7 +52,7 @@ function shortAssignee(v) {
 // обрезанного посередине CSS-правила.
 function stripCssGarbage(text) {
   return text
-    .replace(/^Описание \s*/i, '')
+    .replace(/^\s*Описание\s*/i, '')
     .replace(/\.css-[\w-]+\s*\{[^{}]*\}?/g, ' ')
     .replace(/[\w-]*\{[^{}]*--[\w-]+[^{}]*\}?/g, ' ')
     .replace(/var\(--[\w-]+(?:,[^)]*)?\)?/g, ' ')

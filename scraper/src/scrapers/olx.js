@@ -96,6 +96,7 @@ const OLX_BROWSER_HEADERS = {
 
 export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartment') {
   const url = OLX_CATEGORIES[propertyType][dealType];
+<<<<<<< HEAD
   const { data: html } = await getWithRetry(
     url,
     {
@@ -105,6 +106,12 @@ export async function fetchOlxListings(dealType = 'rent', propertyType = 'apartm
     3,
     true // useProxy — см. http.js: список объявлений это то, что бьётся 403 всю ночь
   );
+=======
+  const { data: html } = await getWithRetry(url, {
+    headers: OLX_BROWSER_HEADERS,
+    timeout: 15000,
+  });
+>>>>>>> d980372cca5b5eb2923c91d2f4d4b7cca7754c90
 
   const $ = cheerio.load(html);
   const seen = new Map(); // externalId -> listing, чтобы не дублировать
@@ -238,6 +245,7 @@ function parseJsonLd($) {
 }
 
 export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
+<<<<<<< HEAD
   const { data: html } = await getWithRetry(
     url,
     {
@@ -247,6 +255,12 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     3,
     true // useProxy
   );
+=======
+  const { data: html } = await getWithRetry(url, {
+    headers: OLX_BROWSER_HEADERS,
+    timeout: 15000,
+  });
+>>>>>>> d980372cca5b5eb2923c91d2f4d4b7cca7754c90
   const $ = cheerio.load(html);
   // Как и с заголовком в fetchOlxListings — OLX иногда вставляет scoped
   // <style> прямо внутрь блока описания, и без удаления этих тегов
@@ -499,8 +513,12 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
     const { data: html } = await getWithRetry(
       sellerListingsUrl,
       { headers: OLX_BROWSER_HEADERS, timeout: 15000 },
+<<<<<<< HEAD
       2,
       true // useProxy
+=======
+      2
+>>>>>>> d980372cca5b5eb2923c91d2f4d4b7cca7754c90
     );
     const $ = cheerio.load(html);
 

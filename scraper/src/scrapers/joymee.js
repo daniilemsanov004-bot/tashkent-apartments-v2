@@ -58,12 +58,8 @@ import { getWithRetry } from '../http.js';
 // скриншотами DevTools — см. таблицу в JOYMEE_CATEGORY ниже.
 //
 // Прочие открытые вопросы:
-//   - настоящий URL страницы объявления на самом сайте (joymee.uz) —
-//     видели только API-эндпоинт деталей, реальный фронтенд-адрес
-//     карточки в браузере не зафиксирован. Ниже используется
-//     https://joymee.uz/announcement/{id} как правдоподобная
-//     заглушка-ссылка для Telegram-уведомлений; исправить, когда
-//     кто-то откроет объявление и посмотрит адресную строку.
+//   - формат URL страницы объявления подтверждён пользователем
+//     11.08.2026: https://joymee.uz/ru/announcements/{id}
 //   - есть ли отдельная страница "все объявления продавца" (аналог
 //     OLX/Uybor) — если да, можно так же считать число объявлений
 //     риелтора; пока sellerListingsUrl всегда null.
@@ -212,9 +208,8 @@ export async function fetchJoymeeListings(dealType = 'rent', propertyType = 'apa
       source: 'joymee',
       deal_type: dealType,
       property_type: propertyType,
-      // TODO: настоящий фронтенд-URL не подтверждён, см. комментарий
-      // в шапке файла. Формат ниже — правдоподобная заглушка.
-      url: `https://joymee.uz/announcement/${id}`,
+      // Формат подтверждён пользователем 11.08.2026: https://joymee.uz/ru/announcements/{id}
+      url: `https://joymee.uz/ru/announcements/${id}`,
       title,
       price,
       posted_raw: postedRaw || 'неизвестно',
@@ -234,10 +229,9 @@ export async function fetchJoymeeListings(dealType = 'rent', propertyType = 'apa
  * (1 = собственник, всё остальное = не собственник), полный телефон,
  * структурный район (district.name) и описание.
  *
- * ВАЖНО: url приходит из item.url (см. fetchJoymeeListings выше) — из
- * него достаём числовой id простым regex по последним цифрам пути.
- * Это устойчиво к тому, что настоящий формат ссылки на сайте пока не
- * подтверждён (id всегда есть в конце заглушки-URL).
+ * ВАЖНО: url приходит из item.url (см. fetchJoymeeListings выше, формат
+ * https://joymee.uz/ru/announcements/{id}) — из него достаём числовой id
+ * простым regex по последним цифрам пути.
  */
 export async function fetchJoymeeDetails(url) {
   const idMatch = String(url || '').match(/(\d+)\/?$/);
@@ -273,7 +267,28 @@ export async function fetchJoymeeDetails(url) {
     null;
 
   const phone = item?.phone_number || null;
-  const locationDistrict = item?.district?.name || null;
+
+  // Район иногда отсутствует в структурном поле district.name у
+  // конкретных объявлений (не баг, просто не заполнено на стороне
+  // Joymee) — тогда пробуем резервные поля, которые тоже встречаются
+  // в ответах API: address.district.name (вложенный объект адреса),
+  // region.district.name (альтернативная вложенность) и текстовую
+  // строку адреса (address_line/address_text/location_text — по
+  // аналогии с полем из списочного эндпоинта, см. fetchJoymeeListings
+  // выше). normalizeDistrict в run.js сам находит нужный район по
+  // подстроке, так что достаточно отдать любой текст с упоминанием
+  // тумана/района — не обязательно чистое название.
+  const locationDistrict =
+    item?.district?.name ||
+    item?.address?.district?.name ||
+    item?.region?.district?.name ||
+    item?.address_line ||
+    item?.address_text ||
+    item?.location_text ||
+    null;
+  if (!locationDistrict) {
+    console.log(`[joymee] объявление ${id}: район не найден ни в одном известном поле ответа API`);
+  }
 
   const priceValue = item?.pricing?.price ?? '';
   const priceCurrencyDisplay = item?.pricing?.currency_display || '';

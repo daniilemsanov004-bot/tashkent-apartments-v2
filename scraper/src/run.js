@@ -22,6 +22,21 @@ const PHONE_REUSE_AGENT_THRESHOLD = 2;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Между тремя запросами подряд к OLX (квартиры/дома/коммерция) делаем
+// паузу — иначе это выглядит как классический паттерн бота ("три
+// одинаковых запроса без пауз ровно каждые 15 минут"), и, похоже,
+// именно это триггерило блокировку 403 всю ночь 11.08.2026 (только у
+// sale, потому что sale всегда идёт первой пачкой в каждом цикле,
+// а к моменту rent проверка уже "размазана" по времени за счёт
+// обработки Uybor/Realting между ними).
+async function olxDelay() {
+  await sleep(5000 + Math.floor(Math.random() * 4000)); // 5-9с с разбросом
+}
+
 // ИИ-классификация отключена по решению (05.08.2026) — весь проект
 // теперь работает только на жёстких правилах (много объявлений у
 // продавца / аккаунт-организация / метка сайта), без обращения к
@@ -410,6 +425,7 @@ async function main() {
   // Продажа — в приоритете, проверяем её первой в каждом цикле
   for (const propertyType of OLX_PROPERTY_TYPES) {
     await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale', fetchOlxSellerListingsCount, propertyType);
+    await olxDelay();
   }
   await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale');
   for (const propertyType of REALTING_PROPERTY_TYPES) {
@@ -418,6 +434,7 @@ async function main() {
 
   for (const propertyType of OLX_PROPERTY_TYPES) {
     await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent', fetchOlxSellerListingsCount, propertyType);
+    await olxDelay();
   }
   await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent');
   for (const propertyType of REALTING_PROPERTY_TYPES) {
@@ -433,9 +450,11 @@ async function main() {
   // него нужен разовый backfill-from-telegram-export.js.
   try {
     console.log('Автоочистка агентских сообщений...');
-    const { totalCandidates, deleted, failed } = await cleanAgentBacklog({ quiet: true });
+    const { totalCandidates, deleted, failed, withoutIdCount } = await cleanAgentBacklog({ quiet: true });
     if (totalCandidates > 0) {
-      console.log(`Автоочистка: удалено ${deleted}, не удалось ${failed} (из ${totalCandidates} кандидатов).`);
+      console.log(
+        `Автоочистка: удалено ${deleted}, не удалось ${failed}, недостижимо (нет id) ${withoutIdCount} (из ${totalCandidates} кандидатов).`
+      );
     } else {
       console.log('Автоочистка: чистить нечего.');
     }

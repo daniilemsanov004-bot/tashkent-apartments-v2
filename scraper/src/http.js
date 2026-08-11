@@ -17,7 +17,16 @@ export async function getWithRetry(url, options = {}, retries = 3) {
         `Попытка ${attempt}/${retries} не удалась (${url})${status ? `, статус ${status}` : ''}: ${err.message}`
       );
       if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, attempt * 2000)); // 2с, 4с, 6с...
+        // 403 обычно значит "сайт распознал бота и временно блокирует
+        // этот IP/паттерн запросов" — а не разовый сетевой сбой.
+        // Долбить его снова через 2 секунды бессмысленно (скорее
+        // продлит блокировку, чем поможет) — ждём заметно дольше,
+        // с небольшим случайным разбросом, чтобы не быть настолько
+        // предсказуемыми.
+        const isBlocked = status === 403 || status === 429;
+        const baseDelay = isBlocked ? attempt * 15000 : attempt * 2000; // блок: 15с,30с... / обычный сбой: 2с,4с,6с...
+        const jitter = Math.floor(Math.random() * 2000);
+        await new Promise((r) => setTimeout(r, baseDelay + jitter));
       }
     }
   }

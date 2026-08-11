@@ -1,11 +1,14 @@
 // Разовый скрипт настройки. Запускать вручную ОДИН РАЗ (или заново —
 // если досоздали новый район), после того как:
-//   1. Созданы 3 супергруппы в Telegram
+//   1. Созданы супергруппы в Telegram (по одной на каждый заполненный
+//      TELEGRAM_GROUP_* ниже)
 //   2. В каждой включён режим "Темы" (Group settings → Topics → On)
 //   3. Бот добавлен в каждую как администратор с правом "Управление темами"
-//   4. В .env прописаны TELEGRAM_GROUP_APARTMENT, TELEGRAM_GROUP_COMMERCIAL,
-//      TELEGRAM_GROUP_HOUSE (chat_id каждой группы — узнать тем же
-//      способом, что и раньше, через getUpdates)
+//   4. В .env прописаны нужные TELEGRAM_GROUP_APARTMENT,
+//      TELEGRAM_GROUP_APARTMENT_RENT, TELEGRAM_GROUP_COMMERCIAL,
+//      TELEGRAM_GROUP_COMMERCIAL_RENT, TELEGRAM_GROUP_HOUSE (chat_id
+//      каждой группы — узнать тем же способом, что и раньше, через
+//      getUpdates)
 //
 // Запуск: node src/setup-topics.js
 
@@ -20,13 +23,15 @@ const GROUPS = {
   apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
   apartment_rent: (process.env.TELEGRAM_GROUP_APARTMENT_RENT || '').trim(),
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
+  commercial_rent: (process.env.TELEGRAM_GROUP_COMMERCIAL_RENT || '').trim(),
   house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
 };
 
 const GROUP_LABELS = {
   apartment: 'Квартиры (продажа)',
   apartment_rent: 'Квартиры (аренда)',
-  commercial: 'Коммерция',
+  commercial: 'Коммерция (продажа)',
+  commercial_rent: 'Коммерция (аренда)',
   house: 'Дома',
 };
 

@@ -151,39 +151,43 @@ export async function notifyNewListing(listing) {
   });
 }
 
-// Соответствие property_type (+ deal_type для аренды квартир — у неё
-// отдельная супергруппа) → переменная окружения с chat_id группы.
-// Соответствие property_type (+ deal_type для аренды квартир — у неё
-// отдельная супергруппа) → переменная окружения с chat_id группы.
+// Соответствие property_type (+ deal_type для аренды квартир и
+// аренды коммерции — у них отдельные супергруппы) → переменная
+// окружения с chat_id группы.
 // Экспортируем — нужно и другим скриптам (recheck-owners.js,
 // delete-agent-messages.js), чтобы не дублировать эту же карту.
 export const TOPIC_GROUPS = {
   apartment: (process.env.TELEGRAM_GROUP_APARTMENT || '').trim(),
   apartment_rent: (process.env.TELEGRAM_GROUP_APARTMENT_RENT || '').trim(),
   commercial: (process.env.TELEGRAM_GROUP_COMMERCIAL || '').trim(),
+  commercial_rent: (process.env.TELEGRAM_GROUP_COMMERCIAL_RENT || '').trim(),
   house: (process.env.TELEGRAM_GROUP_HOUSE || '').trim(),
 };
 
 /**
- * Аренда квартир — единственный случай, где группа зависит не только
- * от property_type, но и от deal_type (продажа квартир остаётся в
- * обычной группе "Квартиры"). Если TELEGRAM_GROUP_APARTMENT_RENT ещё
- * не настроена — просто уходит в общую группу "Квартиры", как раньше,
- * ничего не ломается.
+ * Аренда квартир и аренда коммерции — случаи, где группа зависит не
+ * только от property_type, но и от deal_type (продажа остаётся в
+ * обычной группе "Квартиры"/"Коммерция"). Если соответствующая
+ * TELEGRAM_GROUP_*_RENT ещё не настроена — просто уходит в общую
+ * группу того же типа, как раньше, ничего не ломается.
  */
 export function resolveGroupKey(listing) {
   if (listing.property_type === 'apartment' && listing.deal_type === 'rent' && TOPIC_GROUPS.apartment_rent) {
     return 'apartment_rent';
+  }
+  if (listing.property_type === 'commercial' && listing.deal_type === 'rent' && TOPIC_GROUPS.commercial_rent) {
+    return 'commercial_rent';
   }
   return listing.property_type || 'apartment';
 }
 
 /**
  * Отправляет объявление в тему нужного района внутри одной из
- * супергрупп (Квартиры/Аренда квартир/Коммерция/Дома). Если группа для
- * этого типа не настроена (нет в .env) — просто ничего не делает,
- * молча. Если район неизвестен/тема ещё не создана (setup-topics.js не
- * запускали для него) — уходит в общую тему группы.
+ * супергрупп (Квартиры/Аренда квартир/Коммерция/Аренда коммерции/
+ * Дома). Если группа для этого типа не настроена (нет в .env) —
+ * просто ничего не делает, молча. Если район неизвестен/тема ещё не
+ * создана (setup-topics.js не запускали для него) — уходит в общую
+ * тему группы.
  *
  * @returns {Promise<{chatId: string, messageId: number}|null>} —
  *   данные отправленного сообщения (для сохранения в базе, чтобы потом

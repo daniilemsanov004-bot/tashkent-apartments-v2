@@ -9,16 +9,13 @@ import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting
 // TODO там же.
 import { fetchJoymeeListings, fetchJoymeeDetails } from './scrapers/joymee.js';
 import { classifyListing, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
-import { notifyAlert, notifyToTopicGroup, notifyDeal } from './telegram.js';
+import { notifyAlert, notifyToTopicGroup } from './telegram.js';
 import { isKnown, saveListing, markNotified, countListingsByPhone } from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice } from './priceParser.js';
 import { cleanAgentBacklog } from './cleanAgentMessages.js';
 import { findAgentTextSignal } from './agentSignals.js';
 import { normalizePhone } from './phone.js';
-import { parseArea, parseRooms } from './listingDetails.js';
-import { findUrgencySignal } from './urgencySignals.js';
-import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
 
 // Сколько ДРУГИХ объявлений с тем же номером телефона считаем
 // подозрительным порогом (см. countListingsByPhone в db.js). Не 0
@@ -57,7 +54,7 @@ async function olxDelay() {
 // `process.env.USE_AI_CLASSIFICATION === 'true'`.
 const USE_AI_CLASSIFICATION = false;
 
-async function processSource(fetchList, fetchDetails, sourceName, dealType, fetchSellerCount = null, propertyType = 'apartment', marketStatsMap = null) {
+async function processSource(fetchList, fetchDetails, sourceName, dealType, fetchSellerCount = null, propertyType = 'apartment') {
   const sourceLabel = `${sourceName}-${propertyType}-${dealType}`;
   console.log(`[${sourceLabel}] проверяю новые объявления...`);
 
@@ -72,7 +69,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     return;
   }
 
-  console.log(`[${sourceLabel}] найдено ${items.length} объявлений (за 2 дня) на странице`);
+  console.log(`[${sourceLabel}] найдено ${items.length} объявлений (сегодняшних) на странице`);
   if (items.length === 0) return;
 
   // Счётчики для само-диагностики этого прогона — цель: если сайт
@@ -101,6 +98,14 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       sellerListingsUrl = details?.sellerListingsUrl || null;
       authorAdsCountHint = details?.authorAdsCountHint ?? null;
       sellerNameLooksLikeAgent = details?.sellerNameLooksLikeAgent || false;
+      // Realting rent: метка "Частный продавец"/"Агентство" видна
+      // только на странице объявления (см. fetchRealtingDetails),
+      // подтверждаем/опровергаем item.realting_owner_confirmed именно
+      // здесь, а не доверяем странице списка вслепую.
+      if (item.source === 'realting' && !item.realting_owner_confirmed) {
+        if (details?.sellerType === 'owner') item.realting_owner_confirmed = true;
+        else if (details?.sellerType === 'agent') item.realting_owner_confirmed = 'agent';
+      }
       if (sourceName === 'olx' && fetchSellerCount) {
         sellerCheckedCount++;
         if (!sellerListingsUrl) {
@@ -236,16 +241,36 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       isConfirmedAgent = true;
       confirmedAgentReason = 'аккаунт организации';
     }
+    // Realting rent: страница объявления явно сказала "Агентство" —
+    // такое же надёжное подтверждение, как organization-поле у Uybor.
+    if (!isConfirmedAgent && item.source === 'realting' && item.realting_owner_confirmed === 'agent') {
+      isConfirmedAgent = true;
+      confirmedAgentReason = 'страница объявления Realting помечена "Агентство"';
+    }
     if (isConfirmedAgent) {
       console.log(
         `[${sourceLabel}] продавец "${sellerName || '?'}" — похоже на агентство (${confirmedAgentReason}): ${item.title}`
       );
     }
 
-    // Realting.uz сам размечает продавца ("Частный продавец" в
-    // карточке / выделенная страница "от собственников") — доверяем
-    // этому напрямую, не тратя вызов ИИ-классификации.
-    const isConfirmedOwner = !isConfirmedAgent && item.source === 'realting';
+    // Realting.uz сам размечает продавца ("Частный продавец" — либо
+    // гарантировано fsbo-страницей продажи, либо явно найдено на
+    // странице объявления для rent, см. realting_owner_confirmed) —
+    // доверяем этому напрямую, не тратя вызов ИИ-классификации. Для
+    // rent, если метку вообще нигде не нашли (realting_owner_confirmed
+    // не true и не 'agent'), НЕ считаем собственником по умолчанию —
+    // уходит в sellerCheckUnavailable ниже и объявление откладывается
+    // до следующего прогона, а не публикуется с непроверенной меткой.
+    const isConfirmedOwner =
+      !isConfirmedAgent && item.source === 'realting' && item.realting_owner_confirmed === true;
+    if (
+      !isConfirmedAgent &&
+      !isConfirmedOwner &&
+      item.source === 'realting' &&
+      item.realting_owner_confirmed !== 'agent'
+    ) {
+      sellerCheckUnavailable = true;
+    }
 
     if (!isConfirmedAgent && !isConfirmedOwner && sellerCheckUnavailable) {
       // Пропускаем ВЕСЬ этот прогон для объявления — не сохраняем и не
@@ -342,35 +367,6 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // диапазону цены (price остаётся текстом для отображения как есть).
     const { value: priceValue, currency: priceCurrency } = parsePrice(item.price);
 
-    // Площадь/комнаты — раньше это давала ТОЛЬКО ИИ-классификация
-    // (сейчас отключена, classification.rooms/area всегда null не
-    // из-за бага, а по дизайну — см. ветки isConfirmedAgent/
-    // isConfirmedOwner/!USE_AI_CLASSIFICATION выше). Регэксп-парсер
-    // (listingDetails.js) — бесплатная замена, работает по тому же
-    // rawText независимо от того, какая ветка классификации сработала.
-    const rooms = classification.rooms ?? parseRooms(rawText);
-    const area = classification.area ?? parseArea(rawText);
-
-    // Цена за м² — только когда есть и цена, и площадь; используется
-    // детектором "ниже рынка" (см. marketStats.js).
-    const pricePerSqm =
-      priceValue && area ? Math.round((priceValue / area) * 100) / 100 : null;
-
-    // Срочность/торг из текста — не зависит от цены, отдельный сигнал
-    // (см. urgencySignals.js). Полезен даже без below_market: часто
-    // просто подсказывает, что с продавцом можно поторговаться.
-    const urgencyPhrase = findUrgencySignal(rawText);
-
-    const { belowMarket, belowMarketPct, sampleSize } = marketStatsMap
-      ? evaluateDeal(marketStatsMap, {
-          propertyType,
-          dealType,
-          district,
-          currency: priceCurrency,
-          pricePerSqm,
-        })
-      : { belowMarket: false, belowMarketPct: null, sampleSize: null };
-
     const listing = {
       ...item,
       raw_text: rawText,
@@ -380,14 +376,8 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       district_raw: districtRaw,
       price_value: priceValue,
       price_currency: priceCurrency,
-      price_per_sqm: pricePerSqm,
-      below_market: belowMarket,
-      below_market_pct: belowMarketPct,
-      market_sample_size: sampleSize,
-      urgency_signal: !!urgencyPhrase,
-      urgency_phrase: urgencyPhrase,
-      rooms,
-      area,
+      rooms: classification.rooms,
+      area: classification.area,
       phone: effectivePhone,
       phone_normalized: phoneNormalized,
       seller_type: classification.seller_type,
@@ -437,20 +427,6 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       console.error('Ошибка отправки в Telegram:', err.message);
     }
 
-    // Отдельно, ДОПОЛНИТЕЛЬНО к обычной теме района — если объявление
-    // "ниже рынка", дублируем его в отдельную супергруппу "Выгодные"
-    // (тема по району внутри неё же). Специально не заменяем обычную
-    // отправку выше: пользователь по-прежнему видит все объявления
-    // своего района в привычном месте, а "Выгодные" — это фильтр
-    // поверх, а не альтернативный канал.
-    if (listing.below_market) {
-      try {
-        await notifyDeal(listing);
-      } catch (err) {
-        console.error('Ошибка отправки в Telegram (тема "Выгодные"):', err.message);
-      }
-    }
-
     await new Promise((r) => setTimeout(r, 1200));
   }
 
@@ -489,23 +465,16 @@ const REALTING_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 const JOYMEE_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 
 async function main() {
-  // Пересчёт медиан цены за м² (если устарели/пусто) ДО обработки
-  // объявлений этого прогона — см. marketStats.js. Затем сама таблица
-  // грузится в память один раз (loadMarketStatsMap) и передаётся во
-  // все processSource(), а не читается из базы на каждое объявление.
-  await refreshMarketStatsIfStale();
-  const marketStatsMap = await loadMarketStatsMap();
-
   // Продажа — в приоритете, проверяем её первой в каждом цикле
   for (const propertyType of OLX_PROPERTY_TYPES) {
-    await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale', fetchOlxSellerListingsCount, propertyType, marketStatsMap);
+    await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'sale', fetchOlxSellerListingsCount, propertyType);
     await olxDelay();
   }
   for (const propertyType of UYBOR_PROPERTY_TYPES) {
-    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale', null, propertyType, marketStatsMap);
+    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale', null, propertyType);
   }
   for (const propertyType of REALTING_PROPERTY_TYPES) {
-    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType, marketStatsMap);
+    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType);
   }
   // Joymee: endpoint/поля подтверждены вживую 11.08.2026 (см. шапку
   // scrapers/joymee.js) — продажа квартир/домов/коммерции (все три
@@ -514,25 +483,25 @@ async function main() {
   // fetchJoymeeDetails (advertiser_type !== 1 → sellerNameLooksLikeAgent
   // → агентства не уходят в Telegram, см. processSource выше).
   for (const propertyType of JOYMEE_PROPERTY_TYPES) {
-    await processSource(fetchJoymeeListings, fetchJoymeeDetails, 'joymee', 'sale', null, propertyType, marketStatsMap);
+    await processSource(fetchJoymeeListings, fetchJoymeeDetails, 'joymee', 'sale', null, propertyType);
   }
 
   for (const propertyType of OLX_PROPERTY_TYPES) {
-    await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent', fetchOlxSellerListingsCount, propertyType, marketStatsMap);
+    await processSource(fetchOlxListings, fetchOlxDetails, 'olx', 'rent', fetchOlxSellerListingsCount, propertyType);
     await olxDelay();
   }
   for (const propertyType of UYBOR_PROPERTY_TYPES) {
-    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent', null, propertyType, marketStatsMap);
+    await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent', null, propertyType);
   }
   for (const propertyType of REALTING_PROPERTY_TYPES) {
-    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType, marketStatsMap);
+    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType);
   }
   // Joymee-аренда: deal_type=2 подтверждён вживую 11.08.2026 (см.
   // JOYMEE_DEAL_TYPE в scrapers/joymee.js), квартиры/дом/коммерция для
   // аренды тоже все подтверждены (см. JOYMEE_CATEGORY.rent в
   // scrapers/joymee.js).
   for (const propertyType of JOYMEE_PROPERTY_TYPES) {
-    await processSource(fetchJoymeeListings, fetchJoymeeDetails, 'joymee', 'rent', null, propertyType, marketStatsMap);
+    await processSource(fetchJoymeeListings, fetchJoymeeDetails, 'joymee', 'rent', null, propertyType);
   }
   console.log('Проверка завершена.');
 

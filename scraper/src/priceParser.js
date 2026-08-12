@@ -51,3 +51,18 @@ export function toUzs({ value, currency }, exchangeRateUsdUzs) {
   if (currency === 'USD') return value * exchangeRateUsdUzs;
   return value;
 }
+
+/**
+ * Обратная конвертация — в доллары. Нужна для рыночной статистики
+ * (см. marketStats.js): объявления на одном и том же рынке продавцы
+ * выставляют то в $, то в сумах, и раньше это давало ДВЕ раздельные
+ * группы (apartment|sale|Чиланзар|USD и apartment|sale|Чиланзар|UZS)
+ * вместо одной — выборка искусственно делилась пополам, медиана
+ * дольше становилась надёжной. Приводим всё к USD ТОЛЬКО для расчёта
+ * статистики; исходная валюта объявления в базе не меняется.
+ */
+export function toUsd({ value, currency }, exchangeRateUsdUzs) {
+  if (value === null) return null;
+  if (currency === 'UZS') return value / exchangeRateUsdUzs;
+  return value;
+}

@@ -1,15 +1,15 @@
 // Считает медианную цену за м² по группам (тип недвижимости + тип
-// сделки + район + валюта) и решает, является ли конкретное
-// объявление "ниже рынка". Полностью на статистике, без ИИ и без
-// внешних API — см. обсуждение в чате (варианты "только статистика"
-// vs "статистика + ИИ", выбран первый + ключевые слова срочности,
-// см. urgencySignals.js).
+// сделки + район) и решает, является ли конкретное объявление "ниже
+// рынка". Полностью на статистике, без ИИ и без внешних API — см.
+// обсуждение в чате (варианты "только статистика" vs "статистика +
+// ИИ", выбран первый + ключевые слова срочности, см. urgencySignals.js).
 
 import {
   getStatsSourceListings,
   upsertMarketStats,
   getAllMarketStats,
 } from './db.js';
+import { toUsd } from './priceParser.js';
 
 // Общегородская группа-fallback, когда по конкретному району данных
 // слишком мало для надёжной медианы (см. MIN_SAMPLE ниже). Обёрнуто в
@@ -33,14 +33,27 @@ const BELOW_MARKET_THRESHOLD_PCT = 15;
 // сильно устаревшие цены.
 const STATS_LOOKBACK_DAYS = 45;
 
+// Курс для приведения UZS->USD при расчёте статистики (см. toUsd в
+// priceParser.js). Тот же .env-курс, что и у остального проекта —
+// НЕ живой курс ЦБ, стоит время от времени сверять и обновлять.
+const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 12700;
+
 function median(nums) {
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-export function groupKey(propertyType, dealType, district, currency) {
-  return `${propertyType}|${dealType}|${district}|${currency}`;
+// Валюта больше НЕ часть ключа группировки — см. пояснение от
+// 12.08.2026 ниже. Раньше objявления в $ и в сумах на одном и том же
+// рынке (например Чиланзар, продажа квартир) попадали в РАЗНЫЕ
+// группы (...|Чиланзар|USD и ...|Чиланзар|UZS), из-за чего выборка
+// искусственно делилась пополам и MIN_SAMPLE набирался вдвое дольше.
+// Теперь всё приводится к USD (см. toUsd ниже) ДО группировки, а
+// исходная валюта конкретного объявления в листинге не меняется —
+// unify касается только расчёта статистики.
+export function groupKey(propertyType, dealType, district) {
+  return `${propertyType}|${dealType}|${district}`;
 }
 
 /**
@@ -64,7 +77,7 @@ export async function refreshMarketStatsIfStale() {
   console.log('Пересчитываю рыночную статистику цены за м²...');
   const rows = await getStatsSourceListings(STATS_LOOKBACK_DAYS);
 
-  // group_key -> массив price_per_sqm
+  // group_key -> массив price_per_sqm (все уже в USD, см. toUsd ниже)
   const groups = new Map();
   function addTo(key, value) {
     if (!groups.has(key)) groups.set(key, []);
@@ -73,24 +86,30 @@ export async function refreshMarketStatsIfStale() {
 
   for (const r of rows) {
     if (!r.price_per_sqm || !r.property_type || !r.deal_type || !r.price_currency) continue;
+
+    // Приводим к USD ДО группировки — именно это объединяет объявления
+    // в $ и в сумах в одну общую выборку (см. пояснение у groupKey).
+    const pricePerSqmUsd = toUsd({ value: r.price_per_sqm, currency: r.price_currency }, EXCHANGE_RATE_USD_UZS);
+    if (!pricePerSqmUsd) continue;
+
     // Группа по конкретному району (если он известен)
     if (r.district) {
-      addTo(groupKey(r.property_type, r.deal_type, r.district, r.price_currency), r.price_per_sqm);
+      addTo(groupKey(r.property_type, r.deal_type, r.district), pricePerSqmUsd);
     }
     // Общегородская группа — считаем всегда, независимо от того, есть
     // ли район, это и есть fallback для районов с малой выборкой.
-    addTo(groupKey(r.property_type, r.deal_type, CITY_WIDE, r.price_currency), r.price_per_sqm);
+    addTo(groupKey(r.property_type, r.deal_type, CITY_WIDE), pricePerSqmUsd);
   }
 
   const stats = [];
   for (const [key, values] of groups) {
-    const [propertyType, dealType, district, currency] = key.split('|');
+    const [propertyType, dealType, district] = key.split('|');
     stats.push({
       group_key: key,
       property_type: propertyType,
       deal_type: dealType,
       district,
-      currency,
+      currency: 'USD', // статистика всегда в USD после unify — см. пояснение у groupKey
       median_price_per_sqm: median(values),
       sample_size: values.length,
     });
@@ -126,10 +145,19 @@ export function evaluateDeal(statsMap, { propertyType, dealType, district, curre
     return { belowMarket: false, belowMarketPct: null, sampleSize: null };
   }
 
-  let stat = district ? statsMap.get(groupKey(propertyType, dealType, district, currency)) : null;
+  // Статистика в group_key больше не хранится по валюте (см. groupKey
+  // выше) — сама медиана в statsMap уже в USD, поэтому конкретное
+  // объявление тоже приводим к USD перед сравнением, независимо от
+  // того, в чём оно выставлено у продавца.
+  const pricePerSqmUsd = toUsd({ value: pricePerSqm, currency }, EXCHANGE_RATE_USD_UZS);
+  if (!pricePerSqmUsd) {
+    return { belowMarket: false, belowMarketPct: null, sampleSize: null };
+  }
+
+  let stat = district ? statsMap.get(groupKey(propertyType, dealType, district)) : null;
   if (!stat || stat.sample_size < MIN_SAMPLE) {
     // Fallback на весь город, если по району данных мало/нет.
-    const cityStat = statsMap.get(groupKey(propertyType, dealType, CITY_WIDE, currency));
+    const cityStat = statsMap.get(groupKey(propertyType, dealType, CITY_WIDE));
     if (cityStat && cityStat.sample_size >= MIN_SAMPLE) {
       stat = cityStat;
     }
@@ -139,7 +167,7 @@ export function evaluateDeal(statsMap, { propertyType, dealType, district, curre
     return { belowMarket: false, belowMarketPct: null, sampleSize: stat?.sample_size ?? null };
   }
 
-  const pct = Math.round((1 - pricePerSqm / stat.median_price_per_sqm) * 1000) / 10; // 1 знак после запятой
+  const pct = Math.round((1 - pricePerSqmUsd / stat.median_price_per_sqm) * 1000) / 10; // 1 знак после запятой
   return {
     belowMarket: pct >= BELOW_MARKET_THRESHOLD_PCT,
     belowMarketPct: pct,

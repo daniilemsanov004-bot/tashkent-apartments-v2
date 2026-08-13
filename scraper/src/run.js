@@ -106,6 +106,14 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       sellerListingsUrl = details?.sellerListingsUrl || null;
       authorAdsCountHint = details?.authorAdsCountHint ?? null;
       sellerNameLooksLikeAgent = details?.sellerNameLooksLikeAgent || false;
+      // Realting rent: метка "Частный продавец"/"Агентство" видна
+      // только на странице объявления (см. fetchRealtingDetails →
+      // sellerType), а не в карточке списка — подтверждаем/опровергаем
+      // item.realting_owner_confirmed здесь, а не доверяем вслепую.
+      if (item.source === 'realting' && !item.realting_owner_confirmed) {
+        if (details?.sellerType === 'owner') item.realting_owner_confirmed = true;
+        else if (details?.sellerType === 'agent') item.realting_owner_confirmed = 'agent';
+      }
       if (sourceName === 'olx' && fetchSellerCount) {
         sellerCheckedCount++;
         if (!sellerListingsUrl) {
@@ -252,16 +260,35 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       isConfirmedAgent = true;
       confirmedAgentReason = 'аккаунт организации';
     }
+    // Realting rent: страница объявления явно сказала "Агентство" —
+    // такое же надёжное подтверждение, как organization-поле у Uybor.
+    if (!isConfirmedAgent && item.source === 'realting' && item.realting_owner_confirmed === 'agent') {
+      isConfirmedAgent = true;
+      confirmedAgentReason = 'страница объявления Realting помечена "Агентство"';
+    }
     if (isConfirmedAgent) {
       console.log(
         `[${sourceLabel}] продавец "${sellerName || '?'}" — похоже на агентство (${confirmedAgentReason}): ${item.title}`
       );
     }
 
-    // Realting.uz сам размечает продавца ("Частный продавец" в
-    // карточке / выделенная страница "от собственников") — доверяем
-    // этому напрямую, не тратя вызов ИИ-классификации.
-    const isConfirmedOwner = !isConfirmedAgent && item.source === 'realting';
+    // Realting.uz сам размечает продавца. На fsbo-страницах продажи
+    // сайт ГАРАНТИРУЕТ "от собственника" (realting_owner_confirmed
+    // ставится true уже на этапе списка). На аренде подтверждение
+    // приходит только со страницы объявления (см. выше) — если его
+    // вообще нигде не нашли (ни true, ни 'agent'), НЕ считаем
+    // собственником по умолчанию, а откладываем ниже через
+    // sellerCheckUnavailable — как и для OLX при сбоях проверки.
+    const isConfirmedOwner =
+      !isConfirmedAgent && item.source === 'realting' && item.realting_owner_confirmed === true;
+    if (
+      !isConfirmedAgent &&
+      !isConfirmedOwner &&
+      item.source === 'realting' &&
+      item.realting_owner_confirmed !== 'agent'
+    ) {
+      sellerCheckUnavailable = true;
+    }
 
     if (!isConfirmedAgent && !isConfirmedOwner && sellerCheckUnavailable) {
       // Пропускаем ВЕСЬ этот прогон для объявления — не сохраняем и не

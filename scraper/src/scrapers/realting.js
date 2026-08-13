@@ -13,15 +13,14 @@ import { getWithRetry } from '../http.js';
 //
 // Для аренды отдельных /fsbo-страниц НЕ существует (только продажа
 // размечена так на сайте) — для rent используем обычные страницы
-// /tashkent/property-to-rent/{type} и сами ищем метку "Частный
-// продавец" в каждой карточке, отбрасывая "Агентство".
+// /tashkent/property-to-rent/{type}. Метка "Частный продавец"/
+// "Агентство" на этих страницах ЕСТЬ, но видна ТОЛЬКО на странице
+// самого объявления (не в карточке списка) — подтверждено вживую
+// 11.08.2026, решение принимается в fetchRealtingDetails/run.js.
 //
-// ВАЖНО: URL для house/commercial аренды (property-to-rent/houses,
-// property-to-rent/commercials) и для house/commercial fsbo продажи
-// (tashkent/houses/fsbo, tashkent/commercial/fsbo) построены по
-// аналогии с подтверждённым паттерном апартаментов, но САМИ ПО СЕБЕ
-// вживую не проверены — если при первом прогоне вернут 404 или 0
-// объявлений, нужно открыть сайт и проверить точный путь.
+// Все 6 URL (apartment/house/commercial × sale/rent) подтверждены
+// вживую 11.08.2026 скриншотами пользователя — реальные страницы с
+// объявлениями.
 export const REALTING_CATEGORIES = {
   apartment: {
     sale: 'https://realting.uz/tashkent/apartments/fsbo',
@@ -37,10 +36,19 @@ export const REALTING_CATEGORIES = {
   },
 };
 
-// Ссылки на объявления имеют вид /property/3835137, /commercial/3861623
-// и т.п. — числовой ID в конце пути, без расширения .html (в отличие
-// от OLX).
-const LISTING_LINK_RE = /^\/(property|commercial|short-term-rental|property-to-rent)\/(\d+)(?:[/?].*)?$/;
+// Ссылки на объявления имеют вид /property/3835137 (продажа) или
+// /property-to-rent/3870895 (аренда), /commercial/3861623 и т.п. —
+// числовой ID в конце пути, без расширения .html (в отличие от OLX).
+// НАЙДЕН БАГ (11.08.2026): CSS-селектор ниже раньше ловил только
+// a[href^="/property/"] — а это НЕ матчит "/property-to-rent/..."
+// (после "property" сразу дефис, а не слэш), так что для ВСЕЙ аренды
+// (все property_type) linksOnPage.length был 0 и код молча уходил в
+// `break` на первой же странице, ничего не находя. Подтверждено
+// вживую скриншотом реальной страницы объявления аренды — href именно
+// "/property-to-rent/{id}". Селектор ниже теперь ловит все 4 префикса.
+const LISTING_LINK_RE = /^\/(property-to-rent|property|commercial|short-term-rental)\/(\d+)(?:[/?].*)?$/;
+const LISTING_LINK_SELECTOR =
+  'a[href^="/property-to-rent/"], a[href^="/property/"], a[href^="/commercial/"], a[href^="/short-term-rental/"]';
 const PRICE_RE = /\$[\d\s.,]+(?:\s?млн)?|[\d\s.,]{3,}\s*(?:UZS|сум|у\.?\s?е\.?)/i;
 const MAX_PAGES = 5; // ограничиваем глубину пагинации за один прогон крона
 
@@ -82,7 +90,12 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
     }
 
     const $ = cheerio.load(html);
-    const linksOnPage = $(`a[href^="/property/"], a[href^="/commercial/"]`);
+    const linksOnPage = $(LISTING_LINK_SELECTOR);
+    if (page === 1) {
+      console.log(
+        `[realting-${propertyType}-${dealType}] диагностика: html=${html.length} байт, найдено ссылок-кандидатов=${linksOnPage.length}, title="${$('title').text().trim().slice(0, 80)}"`
+      );
+    }
     if (linksOnPage.length === 0) break; // страниц больше нет
 
     let foundNewOnThisPage = false;
@@ -110,7 +123,7 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
       let container = link.parent();
       for (let i = 0; i < 8 && container.length; i++) {
         const idsInside = new Set();
-        container.find('a[href^="/property/"], a[href^="/commercial/"]').each((_, a) => {
+        container.find(LISTING_LINK_SELECTOR).each((_, a) => {
           const id = extractListingId($(a).attr('href') || '');
           if (id) idsInside.add(id);
         });
@@ -128,15 +141,19 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
         container = container.parent();
       }
 
-      // На fsbo-страницах сайт уже гарантирует "от собственника" —
-      // даже если метку не нашли в разметке, доверяем самой странице.
-      // На обычных страницах аренды доверять нечему — если метку не
-      // нашли или это "Агентство", объявление пропускаем.
-      if (!isFsboPage) {
-        if (sellerTypeText !== 'owner') {
-          skippedAgents++;
-          return;
-        }
+      // Дешёвая попытка поймать метку прямо в карточке списка — если
+      // нашли "Агентство", можно отбросить сразу без похода на
+      // страницу объявления. НО (подтверждено вживую 11.08.2026): на
+      // страницах аренды (/property-to-rent/...) метка вообще не
+      // отображается в карточке списка — видна только на странице
+      // самого объявления. Поэтому здесь НЕЛЬЗЯ требовать найденную
+      // метку для приёма объявления в rent — иначе вся аренда молча
+      // отбрасывается на этом этапе (это и был реальный баг ДО
+      // сегодняшнего фикса селектора, из-за которого сюда вообще не
+      // доходило ни одной ссылки).
+      if (!isFsboPage && sellerTypeText === 'agent') {
+        skippedAgents++;
+        return;
       }
 
       foundNewOnThisPage = true;
@@ -149,8 +166,12 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
         title,
         price,
         posted_raw: 'неизвестно', // на страницах листинга Realting дата публикации не показана
-        // Уже известно от сайта (fsbo-страница) или из метки в карточке —
-        // передаём дальше в run.js, чтобы не делать лишний детект.
+        // На fsbo-страницах (продажа) сайт САМ гарантирует "от
+        // собственника". На rent это ЕЩЁ НЕ подтверждено (метка в
+        // карточке списка обычно не видна) — окончательное решение
+        // принимается в run.js по данным со страницы объявления
+        // (fetchRealtingDetails → sellerType).
+        realting_owner_confirmed: isFsboPage || sellerTypeText === 'owner',
         seller_is_organization: false,
       });
     });
@@ -197,9 +218,41 @@ export async function fetchRealtingDetails(url) {
   const sellerName =
     $('[class*="seller"] [class*="name"]').first().text().trim() ||
     $('[class*="agent-name"]').first().text().trim() ||
+    $('.company-info-desc .company-title').first().text().trim() ||
     null;
+
+  // Метка "Частный продавец"/"Агентство" на странице объявления —
+  // подтверждено вживую 11.08.2026 (реальный HTML страницы): лежит в
+  // блоке продавца, например <div class="color-dark">Частный
+  // продавец</div><div class="company-title">Имя</div>. На страницах
+  // аренды это ЕДИНСТВЕННОЕ место, где эта метка вообще видна (в
+  // карточке списка её нет) — используется как основной сигнал в
+  // run.js для isConfirmedOwner/isConfirmedAgent.
+  const pageText = $('body').text();
+  let sellerType = null;
+  if (/Частный продавец/.test(pageText)) sellerType = 'owner';
+  else if (/Агентство/.test(pageText)) sellerType = 'agent';
+
+  // Район — структурный блок "Местонахождение" (подтверждено вживую
+  // 11.08.2026, реальный HTML): список <li><div class="lh-small">
+  // <div class="fs-small color-dark">Район</div><div>ЗНАЧЕНИЕ</div>
+  // </div></li> внутри #blockAddress.
+  let locationDistrict = null;
+  $('#blockAddress li .lh-small').each((_, el) => {
+    const label = $(el).children().eq(0).text().trim();
+    if (label === 'Район') {
+      locationDistrict = $(el).children().eq(1).text().trim() || null;
+    }
+  });
 
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl: null, imageUrl };
+  return {
+    description,
+    sellerName: sellerName || null,
+    sellerListingsUrl: null,
+    imageUrl,
+    sellerType,
+    locationDistrict,
+  };
 }

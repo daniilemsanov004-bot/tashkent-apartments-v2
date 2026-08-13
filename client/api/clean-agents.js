@@ -1,4 +1,4 @@
-import { requireAuth } from './_auth.js';
+import { requireOwner } from './_auth.js';
 import { cleanAgentMessagesBatch } from './_cleanAgents.js';
 
 export default async function handler(req, res) {
@@ -7,7 +7,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const email = await requireAuth(req, res);
+  // Массовое удаление сообщений в Telegram — тоже только владелец.
+  const email = await requireOwner(req, res);
   if (!email) return;
 
   try {

@@ -28,15 +28,13 @@ create table if not exists listings (
   created_at timestamptz default now()
 );
 
--- Row Level Security включаем на всякий случай, но наш бэкенд (GitHub
--- Actions и Vercel API) обращается через service_role ключ, который
--- обходит RLS — так что для работы системы политики ниже не обязательны.
--- Они нужны только если решите читать таблицу напрямую с фронтенда
--- через анонимный ключ, минуя наш /api.
+-- Row Level Security: включаем и НЕ добавляем разрешающих политик.
+-- Это значит "запретить всё по умолчанию" — весь доступ идёт только
+-- через наш /api (Vercel), который использует service_role ключ и
+-- обходит RLS. Анонимный ключ (он публично лежит в JS-бандле сайта)
+-- при такой настройке не даёт прочитать ни строки напрямую из
+-- Supabase REST API, минуя нашу проверку авторизации.
 alter table listings enable row level security;
-
-create policy "Публичное чтение" on listings
-  for select using (true);
 
 -- Состояние "мастера" поиска в Telegram-боте (см. client/api/telegram-webhook.js).
 create table if not exists bot_sessions (
@@ -46,3 +44,7 @@ create table if not exists bot_sessions (
   updated_at timestamptz default now(),
   primary key (chat_id, user_id)
 );
+
+-- Тоже без публичных политик — доступ только через service_role в
+-- Telegram-вебхуке.
+alter table bot_sessions enable row level security;

@@ -12,7 +12,7 @@ export const DISTRICTS = [
   { canonical: 'Яшнабадский', aliases: ['яшнабад', 'яшнобод', 'yashnabad', 'yashnobod'] },
   { canonical: 'Мирабадский', aliases: ['мирабад', 'миробод', 'mirabad', 'mirobod'] },
   { canonical: 'Сергелийский', aliases: ['сергели', 'sergeli'] },
-  { canonical: 'Шайхантахурский', aliases: ['шайхантахур', 'shayxontohur', 'shaykhantakhur'] },
+  { canonical: 'Шайхантахурский', aliases: ['шайхантахур', 'shayxontohur', 'shayxontoxur', 'shaykhantakhur', 'shaykhontokhur'] },
   { canonical: 'Чиланзарский', aliases: ['чиланзар', 'chilonzor', 'chilanzar'] },
   { canonical: 'Алмазарский', aliases: ['алмазар', 'олмазор', 'almazar', 'olmazor'] },
   { canonical: 'Бектемирский', aliases: ['бектемир', 'bektemir'] },

@@ -1,5 +1,5 @@
 import { supabase } from './_supabase.js';
-import { requireAuth } from './_auth.js';
+import { requireOwner } from './_auth.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -7,7 +7,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const email = await requireAuth(req, res);
+  // Полная очистка базы — необратимое действие, доступное только владельцу.
+  const email = await requireOwner(req, res);
   if (!email) return;
 
   // Удаляем все строки — id никогда не бывает пустой строкой,

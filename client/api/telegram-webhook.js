@@ -576,12 +576,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (WEBHOOK_SECRET) {
-    const got = req.headers['x-telegram-bot-api-secret-token'];
-    if (got !== WEBHOOK_SECRET) {
-      res.status(401).json({ error: 'bad secret token' });
-      return;
-    }
+  // Вебхук всегда должен требовать TELEGRAM_WEBHOOK_SECRET — если переменная не задана,
+  // отказываем всем запросам вместо того, чтобы молча принимать неподписанные апдейты.
+  const got = req.headers['x-telegram-bot-api-secret-token'];
+  if (!WEBHOOK_SECRET || got !== WEBHOOK_SECRET) {
+    res.status(401).json({ error: 'bad secret token' });
+    return;
   }
 
   const update = req.body;

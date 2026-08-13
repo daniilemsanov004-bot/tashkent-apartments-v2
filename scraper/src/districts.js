@@ -46,7 +46,7 @@ export const DISTRICTS = [
   },
   {
     canonical: 'Шайхантахурский',
-    aliases: ['шайхантахур', 'шайхантахурский', 'shayxontohur', 'shaykhantakhur', 'shaykhantahur'],
+    aliases: ['шайхантахур', 'шайхантахурский', 'shayxontohur', 'shayxontoxur', 'shaykhantakhur', 'shaykhantahur', 'shaykhontokhur'],
   },
   {
     canonical: 'Чиланзарский',

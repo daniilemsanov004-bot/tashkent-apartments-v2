@@ -35,6 +35,7 @@ jobs:
           TELEGRAM_GROUP_COMMERCIAL: ${{ secrets.TELEGRAM_GROUP_COMMERCIAL }}
           TELEGRAM_GROUP_COMMERCIAL_RENT: ${{ secrets.TELEGRAM_GROUP_COMMERCIAL_RENT }}
           TELEGRAM_GROUP_HOUSE: ${{ secrets.TELEGRAM_GROUP_HOUSE }}
+          TELEGRAM_GROUP_DEALS: ${{ secrets.TELEGRAM_GROUP_DEALS }}
           USE_AI_CLASSIFICATION: ${{ secrets.USE_AI_CLASSIFICATION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Опционально: http://user:pass@host:port резидентного/мобильного

@@ -13,28 +13,27 @@ import { getWithRetry } from '../http.js';
 //
 // Для аренды отдельных /fsbo-страниц НЕ существует (только продажа
 // размечена так на сайте) — для rent используем обычные страницы
-// /tashkent/property-to-rent/{type}. Метка "Частный продавец"/
-// "Агентство" на этих страницах ЕСТЬ, но видна ТОЛЬКО на странице
-// самого объявления (не в карточке списка) — подтверждено вживую
-// 11.08.2026. Поэтому для rent решение "собственник или агент"
-// принимается по данным fetchRealtingDetails() (см. ниже), а не на
-// этапе списка.
+// /tashkent/property-to-rent/{type} и сами ищем метку "Частный
+// продавец" в каждой карточке, отбрасывая "Агентство".
 //
-// Все 6 URL (apartment/house/commercial × sale/rent) подтверждены
-// вживую 11.08.2026 скриншотами — реальные объявления, метка
-// "Частный продавец" видна и работает так, как ожидалось.
+// ВАЖНО: URL для house/commercial аренды (property-to-rent/houses,
+// property-to-rent/commercials) и для house/commercial fsbo продажи
+// (tashkent/houses/fsbo, tashkent/commercial/fsbo) построены по
+// аналогии с подтверждённым паттерном апартаментов, но САМИ ПО СЕБЕ
+// вживую не проверены — если при первом прогоне вернут 404 или 0
+// объявлений, нужно открыть сайт и проверить точный путь.
 export const REALTING_CATEGORIES = {
   apartment: {
     sale: 'https://realting.uz/tashkent/apartments/fsbo',
     rent: 'https://realting.uz/tashkent/property-to-rent/apartments',
   },
   house: {
-    sale: 'https://realting.uz/tashkent/houses/fsbo',
-    rent: 'https://realting.uz/tashkent/property-to-rent/houses',
+    sale: 'https://realting.uz/tashkent/houses/fsbo', // не проверено вживую
+    rent: 'https://realting.uz/tashkent/property-to-rent/houses', // не проверено вживую
   },
   commercial: {
-    sale: 'https://realting.uz/tashkent/commercial/fsbo',
-    rent: 'https://realting.uz/tashkent/property-to-rent/commercials',
+    sale: 'https://realting.uz/tashkent/commercial/fsbo', // не проверено вживую
+    rent: 'https://realting.uz/tashkent/property-to-rent/commercials', // не проверено вживую
   },
 };
 
@@ -129,20 +128,15 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
         container = container.parent();
       }
 
-      // Дешёвая попытка найти метку прямо в карточке списка (иногда
-      // отрисовывается там же) — если нашли "Агентство", можно
-      // отбросить сразу, не тратя поход на страницу объявления. Но
-      // ПОДТВЕРЖДЕНО ВЖИВУЮ (11.08.2026): на страницах аренды
-      // (/property-to-rent/...) метка "Частный продавец"/"Агентство"
-      // в карточке списка НЕ отображается вообще — видна только после
-      // открытия самого объявления (см. fetchRealtingDetails →
-      // sellerType). Поэтому здесь НЕЛЬЗЯ требовать найденную метку
-      // для приёма объявления в rent — иначе всё аренда со списка
-      // будет молча отброшена (баг, который был до 11.08.2026: rent
-      // с Realting стабильно возвращал 0 объявлений).
-      if (!isFsboPage && sellerTypeText === 'agent') {
-        skippedAgents++;
-        return;
+      // На fsbo-страницах сайт уже гарантирует "от собственника" —
+      // даже если метку не нашли в разметке, доверяем самой странице.
+      // На обычных страницах аренды доверять нечему — если метку не
+      // нашли или это "Агентство", объявление пропускаем.
+      if (!isFsboPage) {
+        if (sellerTypeText !== 'owner') {
+          skippedAgents++;
+          return;
+        }
       }
 
       foundNewOnThisPage = true;
@@ -155,12 +149,8 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
         title,
         price,
         posted_raw: 'неизвестно', // на страницах листинга Realting дата публикации не показана
-        // На fsbo-страницах (продажа) сайт САМ гарантирует "от
-        // собственника" — доверяем без доп. проверки. На rent-страницах
-        // это ЕЩЁ НЕ подтверждено (метка в карточке списка не видна) —
-        // финальное решение принимается в run.js по данным со страницы
-        // объявления (fetchRealtingDetails → sellerType).
-        realting_owner_confirmed: isFsboPage || sellerTypeText === 'owner',
+        // Уже известно от сайта (fsbo-страница) или из метки в карточке —
+        // передаём дальше в run.js, чтобы не делать лишний детект.
         seller_is_organization: false,
       });
     });
@@ -209,18 +199,7 @@ export async function fetchRealtingDetails(url) {
     $('[class*="agent-name"]').first().text().trim() ||
     null;
 
-  // Метка "Частный продавец"/"Агентство" на странице объявления —
-  // подтверждено вживую 11.08.2026 (скриншот): отображается в блоке
-  // продавца рядом с именем и аватаркой, например "Частный продавец
-  // Темурбек Пирматов". На страницах аренды это ЕДИНСТВЕННОЕ место,
-  // где эта метка вообще видна (в карточке списка её нет) — используем
-  // как основной сигнал в run.js для isConfirmedOwner/isConfirmedAgent.
-  const pageText = $('body').text();
-  let sellerType = null;
-  if (/Частный продавец/.test(pageText)) sellerType = 'owner';
-  else if (/Агентство/.test(pageText)) sellerType = 'agent';
-
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
-  return { description, sellerName: sellerName || null, sellerListingsUrl: null, imageUrl, sellerType };
+  return { description, sellerName: sellerName || null, sellerListingsUrl: null, imageUrl };
 }

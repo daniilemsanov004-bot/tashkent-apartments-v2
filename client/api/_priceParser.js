@@ -13,7 +13,10 @@
 // цен объявлений) — см. комментарий там про необходимость менять оба
 // файла синхронно, если правите эвристику.
 
-const USD_MARKERS = /\$|у\.?\s?е\.?|\busd\b/i;
+// См. scraper/src/priceParser.js — та же правка от 12.08.2026:
+// ловим и кириллическое "у.е.", и латинское "y.e." (так его отдаёт
+// Joymee), иначе цены с Joymee молча уезжали в UZS вместо USD.
+const USD_MARKERS = /\$|[yу]\.?\s?[eе]\.?|\busd\b/i;
 const UZS_MARKERS = /сум|so'?m|\buzs\b/i;
 const BILLION = /млрд|billion|bln/i;
 const MILLION = /млн|million|mln/i;

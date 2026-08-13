@@ -18,6 +18,7 @@ export const DISTRICTS = [
   { canonical: 'Бектемирский', aliases: ['бектемир', 'bektemir'] },
   { canonical: 'Учтепинский', aliases: ['учтепа', 'uchtepa'] },
   { canonical: 'Янгихаётский', aliases: ['янгихаёт', 'янгихает', 'yangihayot', 'yangi hayot'] },
+  { canonical: 'Янгиташкентский', aliases: ['янгиташкент', 'yangi tashkent', 'yangitashkent'] },
 ];
 
 const SLUG_BY_CANONICAL = new Map(DISTRICTS.map((d, i) => [d.canonical, `d${i}`]));

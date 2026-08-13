@@ -53,7 +53,7 @@ const PLAUSIBLE_RANGES = {
   sale: { UZS: [30000000, 200000000000], USD: [2000, 15000000] },
 };
 
-function isPlausiblePrice(rawPrice, dealType) {
+export function isPlausiblePrice(rawPrice, dealType) {
   if (!rawPrice) return true; // пустую цену не трогаем — это отдельный случай
   const { value, currency } = parsePrice(rawPrice);
   if (value === null || !currency) return true; // не смогли распарсить — не блокируем

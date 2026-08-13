@@ -244,7 +244,16 @@ export async function notifyToTopicGroup(listing) {
  */
 export async function notifyDeal(listing) {
   const targetChatId = TOPIC_GROUPS.deals;
-  if (!bot || !targetChatId) return null;
+  if (!bot || !targetChatId) {
+    // Раньше тут ничего не логировалось — из-за этого было непонятно,
+    // почему в супергруппу "Выгодные" ничего не приходит: то ли не
+    // настроен TELEGRAM_GROUP_DEALS, то ли бот вообще не поднялся, то
+    // ли реальная ошибка отправки. Теперь видно явно в логе прогона.
+    console.warn(
+      `[notifyDeal] Пропускаю отправку в "Выгодные" — ${!bot ? 'бот не инициализирован (нет TELEGRAM_BOT_TOKEN?)' : 'TELEGRAM_GROUP_DEALS не задан'}.`
+    );
+    return null;
+  }
 
   const { message, buttons } = buildMessagePayload(listing);
   const messageThreadId = await getTopicId('deals', listing.district);
@@ -255,6 +264,7 @@ export async function notifyDeal(listing) {
       reply_markup: { inline_keyboard: buttons },
       ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
     });
+    console.log(`[notifyDeal] Отправлено в "Выгодные" (район: ${listing.district || 'неизвестен'}): ${listing.title}`);
     return { chatId: String(sent.chat.id), messageId: sent.message_id };
   } catch (err) {
     console.error('Не удалось отправить в супергруппу "Выгодные":', err.message);

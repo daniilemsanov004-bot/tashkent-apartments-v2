@@ -160,7 +160,7 @@ export async function getStatsSourceListings(days) {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('listings')
-    .select('price_per_sqm, district, property_type, deal_type, price_currency')
+    .select('price_per_sqm, district, property_type, deal_type, price_currency, market_segment')
     .gte('created_at', cutoff)
     .not('price_per_sqm', 'is', null)
     .in('label_kind', ['owner', 'unchecked']);

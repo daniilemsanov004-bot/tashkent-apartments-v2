@@ -97,8 +97,16 @@ function buildMessagePayload(listing) {
   // notifyDeal), чтобы было видно НАСКОЛЬКО ниже рынка, а не только
   // сам факт. Для не-below_market объявлений с известной ценой/м² эту
   // строку не показываем — незачем засорять обычные уведомления.
+  // Пометка сегмента (см. marketSegment.js) — показываем ТОЛЬКО когда
+  // он известен и был реально использован для более точного сравнения
+  // (см. evaluateDeal в marketStats.js). Цель — чтобы человек видел не
+  // только "%", но и с чем именно сравнивали: "вторичка к вторичке" —
+  // это гораздо надёжнее, чем весь район одним махом (где новостройки
+  // могут исказить медиану, см. пояснение в marketStats.js).
+  const segmentLabel =
+    listing.market_segment === 'secondary' ? ' (вторичка)' : listing.market_segment === 'new_build' ? ' (новостройка)' : '';
   const belowMarketLine = listing.below_market
-    ? `🔥 На ${listing.below_market_pct}% ниже рыночной цены/м² (по ${listing.market_sample_size} объявл. в округе)\n`
+    ? `🔥 На ${listing.below_market_pct}% ниже рыночной цены/м²${segmentLabel} (по ${listing.market_sample_size} объявл.)\n`
     : '';
   const urgencyLine = listing.urgency_signal ? `⚡ В тексте: «${listing.urgency_phrase}»\n` : '';
 

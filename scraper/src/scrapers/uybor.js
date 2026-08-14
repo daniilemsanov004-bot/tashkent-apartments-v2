@@ -1,4 +1,5 @@
 import { getWithRetry } from '../http.js';
+import { detectMarketSegment } from '../marketSegment.js';
 
 // Найдено через DevTools → Network → Fetch/XHR на uybor.uz.
 // operationType__eq принимает 'rent' | 'sale' напрямую — совпадает
@@ -225,6 +226,13 @@ export async function fetchUyborListings(dealType = 'rent', propertyType = 'apar
       seller_name: sellerName,
       raw_district: rawDistrict,
       image_url: imageUrl,
+      // Best-effort: у Uybor нет отдельного поля "новостройка/вторичка",
+      // подтверждённого вживую (fetchUyborDetails ниже даже не тянет
+      // описание, см. комментарий там) — поэтому ищем явную фразу
+      // только в title. Реже сработает, чем на OLX, но лучше, чем
+      // ничего, и безопасно молчит (null), если фразы нет — см.
+      // marketSegment.js и фолбэк в marketStats.js.
+      market_segment: detectMarketSegment(title),
     });
   }
 

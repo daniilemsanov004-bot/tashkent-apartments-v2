@@ -56,6 +56,22 @@ export function groupKey(propertyType, dealType, district) {
   return `${propertyType}|${dealType}|${district}`;
 }
 
+// Сегментированный ключ (новостройка/вторичка, см. marketSegment.js) —
+// ДОПОЛНИТЕЛЬНАЯ, более узкая группа поверх обычной groupKey(), а не
+// замена ей. Добавлено 15.08.2026: в Ташкенте в одном районе может
+// продаваться и дешёвая старая вторичка, и элитная новостройка по
+// цене за м² в разы выше — если они попадают в одну и ту же
+// (небольшую) выборку, 1-2 объявления из новостройки утягивают
+// медиану района вверх, и обычная вторичка начинает ложно выглядеть
+// сильно "дешевле рынка". Суффикс сегмента добавляем ТОЛЬКО когда он
+// известен — объявления с неизвестным сегментом (marketSegment=null)
+// по-прежнему участвуют в обычной groupKey(), которая остаётся первым
+// фолбэком в evaluateDeal ниже, так что ничего не теряется, только
+// уточняется там, где сегмент удалось определить.
+export function segmentedGroupKey(propertyType, dealType, district, segment) {
+  return `${propertyType}|${dealType}|${district}|${segment}`;
+}
+
 /**
  * Пересчитывает market_stats на каждом прогоне (см. комментарий ниже
  * про то, почему не реже). Вызывать один раз в начале прогона (см.
@@ -95,14 +111,28 @@ export async function refreshMarketStatsIfStale() {
     // Группа по конкретному району (если он известен)
     if (r.district) {
       addTo(groupKey(r.property_type, r.deal_type, r.district), pricePerSqmUsd);
+      // Более узкая сегментированная группа (см. segmentedGroupKey) —
+      // считаем ДОПОЛНИТЕЛЬНО, только когда сегмент известен.
+      if (r.market_segment) {
+        addTo(segmentedGroupKey(r.property_type, r.deal_type, r.district, r.market_segment), pricePerSqmUsd);
+      }
     }
     // Общегородская группа — считаем всегда, независимо от того, есть
     // ли район, это и есть fallback для районов с малой выборкой.
     addTo(groupKey(r.property_type, r.deal_type, CITY_WIDE), pricePerSqmUsd);
+    if (r.market_segment) {
+      addTo(segmentedGroupKey(r.property_type, r.deal_type, CITY_WIDE, r.market_segment), pricePerSqmUsd);
+    }
   }
 
   const stats = [];
   for (const [key, values] of groups) {
+    // Сегментированный ключ даёт 4 части вместо 3 (см. segmentedGroupKey) —
+    // 4-я просто не пишется в отдельную колонку (market_stats столбцов
+    // под неё не заводили, group_key самодостаточен как первичный ключ
+    // и как единственное, что реально читает loadMarketStatsMap), но
+    // district у сегментированной строки всё равно должен остаться
+    // настоящим районом, а не обрезком с сегментом внутри строки.
     const [propertyType, dealType, district] = key.split('|');
     stats.push({
       group_key: key,
@@ -137,10 +167,10 @@ export async function loadMarketStatsMap() {
 
 /**
  * @param {Map} statsMap результат loadMarketStatsMap()
- * @param {{propertyType:string, dealType:string, district:string|null, currency:string|null, pricePerSqm:number|null}} listingInfo
+ * @param {{propertyType:string, dealType:string, district:string|null, currency:string|null, pricePerSqm:number|null, marketSegment?:('new_build'|'secondary'|null)}} listingInfo
  * @returns {{belowMarket:boolean, belowMarketPct:number|null, sampleSize:number|null}}
  */
-export function evaluateDeal(statsMap, { propertyType, dealType, district, currency, pricePerSqm }) {
+export function evaluateDeal(statsMap, { propertyType, dealType, district, currency, pricePerSqm, marketSegment = null }) {
   if (!pricePerSqm || !currency) {
     return { belowMarket: false, belowMarketPct: null, sampleSize: null };
   }
@@ -154,13 +184,29 @@ export function evaluateDeal(statsMap, { propertyType, dealType, district, curre
     return { belowMarket: false, belowMarketPct: null, sampleSize: null };
   }
 
-  let stat = district ? statsMap.get(groupKey(propertyType, dealType, district)) : null;
+  // Цепочка фолбэков от самой узкой/точной группы к самой широкой.
+  // Каждый следующий шаг используется, только если у предыдущего не
+  // хватило выборки (MIN_SAMPLE) — см. пояснение у segmentedGroupKey.
+  // 1) район + сегмент (самое точное сравнение, когда данных хватает)
+  // 2) район, все сегменты вместе (прежнее поведение — самый частый
+  //    случай, пока сегмент известен не у всех объявлений)
+  // 3) весь город + сегмент
+  // 4) весь город, все сегменты вместе (старый fallback)
+  let stat = null;
+  if (district && marketSegment) {
+    stat = statsMap.get(segmentedGroupKey(propertyType, dealType, district, marketSegment));
+  }
+  if ((!stat || stat.sample_size < MIN_SAMPLE) && district) {
+    const districtStat = statsMap.get(groupKey(propertyType, dealType, district));
+    if (districtStat && districtStat.sample_size >= MIN_SAMPLE) stat = districtStat;
+  }
+  if ((!stat || stat.sample_size < MIN_SAMPLE) && marketSegment) {
+    const citySegmentStat = statsMap.get(segmentedGroupKey(propertyType, dealType, CITY_WIDE, marketSegment));
+    if (citySegmentStat && citySegmentStat.sample_size >= MIN_SAMPLE) stat = citySegmentStat;
+  }
   if (!stat || stat.sample_size < MIN_SAMPLE) {
-    // Fallback на весь город, если по району данных мало/нет.
     const cityStat = statsMap.get(groupKey(propertyType, dealType, CITY_WIDE));
-    if (cityStat && cityStat.sample_size >= MIN_SAMPLE) {
-      stat = cityStat;
-    }
+    if (cityStat && cityStat.sample_size >= MIN_SAMPLE) stat = cityStat;
   }
 
   if (!stat || stat.sample_size < MIN_SAMPLE || !stat.median_price_per_sqm) {

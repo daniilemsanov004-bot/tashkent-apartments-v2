@@ -188,7 +188,7 @@ Telegram.
      `https://tashkent-apartments-v2.vercel.app`)
    - **Redirect URLs** — добавьте туда же этот адрес (можно с `/**` на
      конце, чтобы разрешить все пути)
-3. **Supabase → SQL Editor** — выполните `supabase/migration_team_access.sql`,
+3. **Supabase → SQL Editor** — выполните `supabase/02_team_access.sql`,
    заменив в нём email на свой собственный (первый человек с доступом).
 4. **Supabase → Project Settings → API Keys** — возьмите **anon public**
    ключ (не service_role! это другой, публичный ключ, специально для браузера).

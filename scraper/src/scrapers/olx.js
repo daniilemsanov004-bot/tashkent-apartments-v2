@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
 import { parsePrice } from '../priceParser.js';
+import { detectMarketSegment } from '../marketSegment.js';
 
 // Два раздела — аренда и продажа квартир по Ташкенту. Забираем ВСЕ
 // объявления в каждом, не только помеченные сайтом "от собственника"
@@ -480,6 +481,14 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     sellerName = $(authorLinkEl).closest('div').find('h4, h3, [class*="name"]').first().text().trim();
   }
 
+  // "Тип жилья: Вторичный рынок" / "Новостройка" — стандартная строка
+  // характеристик карточки OLX (см. marketSegment.js). Ищем по всему
+  // bodyText, а не по конкретному CSS-селектору — эта фраза уже точный
+  // якорь сама по себе, риск ложного совпадения в другом месте страницы
+  // минимален, а привязка к вёрстке (как показал опыт с "Все объявления
+  // автора" выше) — самое хрупкое место.
+  const marketSegment = detectMarketSegment(bodyText);
+
   return {
     description,
     sellerName: sellerName || null,
@@ -490,6 +499,7 @@ export async function fetchOlxDetails(url, { skipPhone = false } = {}) {
     phone,
     ldPrice,
     imageUrl,
+    marketSegment,
   };
 }
 

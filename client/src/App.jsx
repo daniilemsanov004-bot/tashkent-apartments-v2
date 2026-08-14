@@ -205,7 +205,11 @@ const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted,
       {(listing.below_market || listing.urgency_signal) && (
         <p className="card-deal-line">
           {listing.below_market && (
-            <span className="deal-badge">🔥 На {listing.below_market_pct}% ниже рынка</span>
+            <span className="deal-badge">
+              🔥 На {listing.below_market_pct}% ниже рынка
+              {listing.market_segment === 'secondary' && ' (вторичка)'}
+              {listing.market_segment === 'new_build' && ' (новостройка)'}
+            </span>
           )}
           {listing.urgency_signal && (
             <span className="deal-badge deal-badge-urgency">⚡ {listing.urgency_phrase}</span>

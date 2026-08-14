@@ -1,4 +1,5 @@
 import { getWithRetry } from '../http.js';
+import { detectMarketSegment } from '../marketSegment.js';
 
 // ЧЕТВЁРТЫЙ ИСТОЧНИК: joymee.uz — платформа объявлений о недвижимости
 // по Узбекистану. ПОДТВЕРЖДЕНО ВЖИВУЮ 11.08.2026 через DevTools →
@@ -299,6 +300,12 @@ export async function fetchJoymeeDetails(url) {
 
   const imageUrl = extractJoymeeDetailImage(item);
 
+  // См. marketSegment.js — у Joymee, в отличие от Uybor, есть полное
+  // description с описанием (item?.description выше), плюс title из
+  // списка обычно тоже доступен run.js — но здесь под рукой только
+  // описание, этого достаточно.
+  const marketSegment = detectMarketSegment(item?.description || item?.title);
+
   return {
     description: item?.description || '',
     sellerName,
@@ -311,6 +318,7 @@ export async function fetchJoymeeDetails(url) {
     phone,
     ldPrice,
     imageUrl,
+    marketSegment,
   };
 }
 

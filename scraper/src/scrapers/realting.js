@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
+import { detectMarketSegment } from '../marketSegment.js';
 
 // У Realting.uz, в отличие от OLX и Uybor, ЕСТЬ готовый встроенный
 // фильтр "от собственника" — отдельные SEO-страницы /fsbo (For Sale
@@ -247,6 +248,11 @@ export async function fetchRealtingDetails(url) {
 
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
+  // См. marketSegment.js — ищем по всему тексту страницы, как и
+  // sellerType чуть выше (тот же pageText, дополнительных запросов не
+  // нужно).
+  const marketSegment = detectMarketSegment(pageText);
+
   return {
     description,
     sellerName: sellerName || null,
@@ -254,5 +260,6 @@ export async function fetchRealtingDetails(url) {
     imageUrl,
     sellerType,
     locationDistrict,
+    marketSegment,
   };
 }

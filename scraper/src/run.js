@@ -19,6 +19,7 @@ import { normalizePhone } from './phone.js';
 import { parseArea, parseRooms } from './listingDetails.js';
 import { findUrgencySignal } from './urgencySignals.js';
 import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
+import { detectMarketSegment } from './marketSegment.js';
 
 // Тот же курс, что и в marketStats.js (см. пояснение там) — нужен тут
 // для санити-проверки price_per_sqm ниже, ДО того как значение вообще
@@ -99,9 +100,15 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let authorAdsCountHint = null;
     let sellerNameLooksLikeAgent = false;
     let detailsFetchFailed = false;
+    // "Новостройка"/"вторичный рынок" — см. marketSegment.js. Uybor
+    // уже определяет это на этапе списка (fetchUyborListings, только
+    // title доступен там), остальные источники — на этапе деталей
+    // (details.marketSegment ниже, там доступно полное описание).
+    let marketSegment = item.market_segment ?? null;
     try {
       const details = await fetchDetails(item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
+      if (details?.marketSegment) marketSegment = details.marketSegment;
       sellerName = details?.sellerName || item.seller_name || null;
       sellerListingsUrl = details?.sellerListingsUrl || null;
       authorAdsCountHint = details?.authorAdsCountHint ?? null;
@@ -162,6 +169,12 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       detailsFetchFailed = true;
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
     }
+
+    // Последний, самый дешёвый шанс поймать сегмент — по итоговому
+    // rawText (title+description), даже если конкретный источник его
+    // не нашёл (например, fetchDetails упал — see catch выше — но
+    // item.title сам по себе уже содержит фразу).
+    if (!marketSegment) marketSegment = detectMarketSegment(rawText);
 
     const phoneMatch = rawText.match(PHONE_REGEX);
     const phoneFromText = phoneMatch ? phoneMatch[1] : null;
@@ -442,6 +455,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
           district,
           currency: priceCurrency,
           pricePerSqm,
+          marketSegment,
         })
       : { belowMarket: false, belowMarketPct: null, sampleSize: null };
 
@@ -458,6 +472,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       below_market: belowMarket,
       below_market_pct: belowMarketPct,
       market_sample_size: sampleSize,
+      market_segment: marketSegment,
       urgency_signal: !!urgencyPhrase,
       urgency_phrase: urgencyPhrase,
       rooms,

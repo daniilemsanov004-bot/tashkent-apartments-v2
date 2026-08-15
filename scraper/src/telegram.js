@@ -3,6 +3,11 @@ import { getTopicId } from './db.js';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const chatId = (process.env.TELEGRAM_CHAT_ID || '').trim();
+// Личный chat_id (не группа) — куда идут служебные алерты о сбоях
+// парсера (notifyAlert ниже), см. пояснение там. Отдельно от chatId
+// выше: тот — общий чат с обычными карточками объявлений, туда
+// алерты раньше падали вперемешку с ними и терялись.
+const adminChatId = (process.env.TELEGRAM_ADMIN_CHAT_ID || '').trim();
 
 let bot = null;
 if (token) {
@@ -74,7 +79,10 @@ function buildHashtags(listing) {
  * Собирает текст сообщения и кнопки — общая логика для обоих
  * назначений (основная группа с /find и тематические супергруппы).
  */
-function buildMessagePayload(listing) {
+// export — нужна отдельным разовым скриптам (см.
+// scripts/backfill-telegram-segment-labels.js), которые правят текст
+// УЖЕ отправленных сообщений задним числом, не переотправляя их.
+export function buildMessagePayload(listing) {
   const roomsLine = listing.rooms ? `${listing.rooms}-комн. ` : '';
   const areaLine = listing.area ? `, ${listing.area} м²` : '';
   const districtLine = listing.district ? `📍 ${listing.district}\n` : '';
@@ -300,14 +308,62 @@ export async function deleteTelegramMessage(chatId, messageId) {
 }
 
 /**
+ * Правит ТЕКСТ уже отправленного сообщения задним числом (например,
+ * когда backfill проставил market_segment уже после отправки — см.
+ * scripts/backfill-telegram-segment-labels.js). Намеренно НЕ трогает
+ * reply_markup (кнопки) — если их не передавать в editMessageText,
+ * Telegram оставляет текущую клавиатуру как есть. Это важно: кнопки
+ * "✅ Связался"/"👤 Беру в работу" могли быть уже нажаты и пересобраны
+ * в другое состояние через client/api/telegram-webhook.js — переотправка
+ * "свежей" клавиатуры из buildMessagePayload откатила бы это состояние
+ * визуально, хотя в базе (contacted/assigned) всё осталось бы верно.
+ * Текст же статус не отражает (см. buildMessagePayload) — его редактировать безопасно.
+ *
+ * Как и deleteTelegramMessage — работает только для сообщений, у
+ * которых сохранены chat_id/message_id (см. markNotified в db.js).
+ */
+export async function editNotifiedMessageText(listing) {
+  if (!bot || !listing?.telegram_chat_id || !listing?.telegram_message_id) return false;
+  const { message } = buildMessagePayload(listing);
+  try {
+    await bot.editMessageText(message, {
+      chat_id: listing.telegram_chat_id,
+      message_id: listing.telegram_message_id,
+    });
+    return true;
+  } catch (err) {
+    // "message is not modified" — Telegram так отвечает, если новый
+    // текст побайтово совпал со старым (например, сегмент определился,
+    // но объявление не below_market — тогда строка с сегментом в тексте
+    // вообще не появляется, текст не изменился). Это не ошибка.
+    if (/message is not modified/i.test(err.message)) return true;
+    console.error(`Не удалось отредактировать сообщение ${listing.telegram_message_id} в чате ${listing.telegram_chat_id}:`, err.message);
+    return false;
+  }
+}
+
+/**
  * Служебные алерты о сбоях парсера (сайт не открылся, селекторы
  * перестали находить объявления и т.п.) — чтобы вы узнали о проблеме
  * сразу, а не через неделю тишины, гадая, закончились ли объявления.
+ *
+ * Идут ЛИЧНО вам через бота (TELEGRAM_ADMIN_CHAT_ID), а не в общий
+ * чат с объявлениями (TELEGRAM_CHAT_ID) — раньше алерты падали в
+ * общий чат вперемешку с обычными карточками и терялись в потоке
+ * (см. диагностику 15.08.2026 — обнаружили молчание Realting только
+ * по скриншоту, спустя несколько часов). Если TELEGRAM_ADMIN_CHAT_ID
+ * не задан — алерт просто не отправится (см. предупреждение в
+ * консоли), это не ломает остальной пайплайн.
  */
 export async function notifyAlert(text) {
-  if (!bot || !chatId) return;
+  if (!bot || !adminChatId) {
+    if (!adminChatId) {
+      console.warn('⚠️  TELEGRAM_ADMIN_CHAT_ID не задан — алерт не отправлен:', text);
+    }
+    return;
+  }
   try {
-    await bot.sendMessage(chatId, text);
+    await bot.sendMessage(adminChatId, text);
   } catch (err) {
     console.error('Не удалось отправить алерт в Telegram:', err.message);
   }

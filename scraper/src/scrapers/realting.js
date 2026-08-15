@@ -40,16 +40,28 @@ export const REALTING_CATEGORIES = {
 // Ссылки на объявления имеют вид /property/3835137 (продажа) или
 // /property-to-rent/3870895 (аренда), /commercial/3861623 и т.п. —
 // числовой ID в конце пути, без расширения .html (в отличие от OLX).
-// НАЙДЕН БАГ (11.08.2026): CSS-селектор ниже раньше ловил только
-// a[href^="/property/"] — а это НЕ матчит "/property-to-rent/..."
-// (после "property" сразу дефис, а не слэш), так что для ВСЕЙ аренды
-// (все property_type) linksOnPage.length был 0 и код молча уходил в
-// `break` на первой же странице, ничего не находя. Подтверждено
-// вживую скриншотом реальной страницы объявления аренды — href именно
-// "/property-to-rent/{id}". Селектор ниже теперь ловит все 4 префикса.
-const LISTING_LINK_RE = /^\/(property-to-rent|property|commercial|short-term-rental)\/(\d+)(?:[/?].*)?$/;
-const LISTING_LINK_SELECTOR =
-  'a[href^="/property-to-rent/"], a[href^="/property/"], a[href^="/commercial/"], a[href^="/short-term-rental/"]';
+// НАЙДЕН БАГ (11.08.2026): CSS-селектор ловил только a[href^="/property/"]
+// — не матчил "/property-to-rent/..." (после "property" сразу дефис,
+// а не слэш) — для ВСЕЙ аренды linksOnPage.length был 0.
+//
+// НАЙДЕН ВТОРОЙ БАГ (15.08.2026): сайт сменил вёрстку — href карточек
+// стал АБСОЛЮТНЫМ URL ("https://realting.uz/property/3871075"), а не
+// относительным путём — CSS-селектор на основе a[href^="/property/"]
+// (проверка НАЧАЛА строки) снова перестал матчить вообще всё, теперь
+// уже во всех 6 категориях сразу. Диагностировано по логам GitHub
+// Actions от пользователя + сверке с реальной HTML-структурой страницы
+// (html~580КБ, верный <title> — не заглушка антибота, страница честно
+// загрузилась, просто верстка не совпала с CSS-селектором).
+//
+// ПОСЛЕ ЭТОГО (15.08.2026) убрали CSS-селектор-подстроку совсем —
+// он дублировал (и рассинхронизировался с) LISTING_LINK_RE ниже уже
+// ДВАЖДЫ за 4 дня. Теперь единственный источник правды — этот regex:
+// берём все <a href> на странице через $('a[href]') и фильтруем этим
+// же регэкспом (см. extractListingId, используется и для сбора ссылок,
+// и внутри подъёма по контейнеру ниже). Единственное, от чего это
+// всё ещё зависит — сама структура URL (/property/{id}), а она
+// меняется на порядок реже вёрстки/классов.
+const LISTING_LINK_RE = /(?:^|\/\/realting\.uz)\/(property-to-rent|property|commercial|short-term-rental)\/(\d+)(?:[/?].*)?$/;
 const PRICE_RE = /\$[\d\s.,]+(?:\s?млн)?|[\d\s.,]{3,}\s*(?:UZS|сум|у\.?\s?е\.?)/i;
 const MAX_PAGES = 5; // ограничиваем глубину пагинации за один прогон крона
 
@@ -75,14 +87,19 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
     const url = page === 1 ? baseUrl : `${baseUrl}?page=${page}`;
     let html;
     try {
-      const res = await getWithRetry(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          'Accept-Language': 'ru-RU,ru;q=0.9',
+      const res = await getWithRetry(
+        url,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept-Language': 'ru-RU,ru;q=0.9',
+          },
+          timeout: 15000,
         },
-        timeout: 15000,
-      });
+        3,
+        true // useProxy — см. диагностику 15.08.2026 в http.js: реалтинг тихо блокирует GH Actions IP
+      );
       html = res.data;
     } catch (err) {
       if (page === 1) throw err; // первая страница обязана открыться
@@ -91,13 +108,47 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
     }
 
     const $ = cheerio.load(html);
-    const linksOnPage = $(LISTING_LINK_SELECTOR);
+    // Раньше отбор ссылок шёл через CSS-селектор (a[href^="..."] /
+    // a[href*="..."] — список подстрок, которые нужно было вручную
+    // держать в синхроне с LISTING_LINK_RE ниже). Это и было корнем
+    // обеих находок 11.08.2026 и 15.08.2026: два источника правды
+    // (CSS-селектор и regex) разошлись — сайт поменял формат href
+    // (сначала добавил "-to-rent", потом сделал ссылки абсолютными), и
+    // CSS-селектор просто перестал совпадать с тем, что реально
+    // матчил regex. Теперь источник правды ОДИН — LISTING_LINK_RE:
+    // берём вообще ВСЕ ссылки на странице и фильтруем тем же regex,
+    // которым потом всё равно достаём ID. Это устойчивее к любым
+    // будущим переменам вёрстки/классов — единственное, от чего это
+    // всё ещё зависит, это сама структура URL (/property/{id} и т.п.),
+    // а она у сайтов меняется на порядок реже, чем разметка/стили.
+    const linksOnPage = $('a[href]').filter((_, el) => Boolean(extractListingId($(el).attr('href') || '')));
     if (page === 1) {
       console.log(
         `[realting-${propertyType}-${dealType}] диагностика: html=${html.length} байт, найдено ссылок-кандидатов=${linksOnPage.length}, title="${$('title').text().trim().slice(0, 80)}"`
       );
     }
-    if (linksOnPage.length === 0) break; // страниц больше нет
+    if (linksOnPage.length === 0) {
+      if (page === 1) {
+        // 0 совпадений именно на ПЕРВОЙ странице — подозрительно:
+        // страница загрузилась (мы уже прошли getWithRetry выше без
+        // ошибки), но ни одной ссылки на объявление не нашлось. Для
+        // этих 6 категорий это практически никогда не бывает правдой
+        // (сотни объявлений всегда есть) — гораздо вероятнее, что
+        // опять поменялась структура URL. РАНЬШЕ это тихо возвращало
+        // [] и run.js просто логировал "найдено 0 объявлений" безо
+        // всякого алерта (см. `if (items.length === 0) return;` в
+        // run.js) — именно из-за этого сбой 15.08.2026 обнаружился
+        // только по случайному скриншоту пользователя, а не сам.
+        // Бросаем ошибку вместо тихого return — она уйдёт в тот же
+        // try/catch в run.js, что и сетевые сбои, и вызовет
+        // notifyAlert (теперь лично в личку, см. TELEGRAM_ADMIN_CHAT_ID
+        // в telegram.js) — тишина такого рода больше невозможна.
+        throw new Error(
+          `0 объявлений на странице 1, хотя html=${Math.round(html.length / 1024)}КБ загрузился (title="${$('title').text().trim().slice(0, 80)}") — вероятно, изменилась структура ссылок на сайте`
+        );
+      }
+      break; // страниц 2+ дальше нет — это нормально
+    }
 
     let foundNewOnThisPage = false;
 
@@ -108,7 +159,13 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
       if (!externalId) return;
       if (seen.has(externalId)) return;
 
-      const fullUrl = `https://realting.uz${href.split('?')[0]}`;
+      // href теперь бывает и абсолютным ("https://realting.uz/property/123"),
+      // и относительным ("/property/123", см. пояснение у LISTING_LINK_RE
+      // выше) — нормализуем до относительного пути ПЕРЕД сборкой fullUrl,
+      // иначе для абсолютного варианта получится склеенный битый URL
+      // вида "https://realting.uzhttps://realting.uz/property/123".
+      const hrefPath = href.replace(/^https?:\/\/realting\.uz/, '');
+      const fullUrl = `https://realting.uz${hrefPath.split('?')[0]}`;
 
       const linkClone = link.clone();
       linkClone.find('style, script').remove();
@@ -124,7 +181,11 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
       let container = link.parent();
       for (let i = 0; i < 8 && container.length; i++) {
         const idsInside = new Set();
-        container.find(LISTING_LINK_SELECTOR).each((_, a) => {
+        // Тот же принцип, что и у linksOnPage выше: не полагаемся на
+        // CSS-подстроки, единственный источник правды — extractListingId
+        // (тот же regex). container.find('a[href]') просто даёт кандидатов,
+        // extractListingId их фильтрует и проверяет по-настоящему.
+        container.find('a[href]').each((_, a) => {
           const id = extractListingId($(a).attr('href') || '');
           if (id) idsInside.add(id);
         });
@@ -196,10 +257,15 @@ export async function fetchRealtingListings(dealType = 'sale', propertyType = 'a
  * запасному варианту (самый длинный текстовый блок на странице).
  */
 export async function fetchRealtingDetails(url) {
-  const { data: html } = await getWithRetry(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-    timeout: 15000,
-  });
+  const { data: html } = await getWithRetry(
+    url,
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 15000,
+    },
+    3,
+    true // useProxy — та же блокировка GH Actions IP, что и на странице списка выше
+  );
   const $ = cheerio.load(html);
 
   let description =

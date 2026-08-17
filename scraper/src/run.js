@@ -16,7 +16,7 @@ import { parsePrice, toUsd } from './priceParser.js';
 import { cleanAgentBacklog } from './cleanAgentMessages.js';
 import { findAgentTextSignal } from './agentSignals.js';
 import { normalizePhone } from './phone.js';
-import { parseArea, parseRooms } from './listingDetails.js';
+import { extractListingInfo } from './extractListingInfo.js';
 import { findUrgencySignal } from './urgencySignals.js';
 import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
 import { detectMarketSegment } from './marketSegment.js';
@@ -34,6 +34,12 @@ const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 12700
 // с одним номером — уже гораздо больше похоже на агентство, чем на
 // повторную публикацию одного и того же объекта.
 const PHONE_REUSE_AGENT_THRESHOLD = 2;
+
+// Между вызовами extractListingInfo (LLM) — пауза, чтобы не упереться
+// в лимит бесплатного тира Gemini (10 запросов/мин на момент внедрения,
+// см. обсуждение в чате). 7с даёт ~8-9 запросов/мин с запасом — если
+// лимит Google в будущем изменится, это первое место для правки.
+const LLM_EXTRACT_DELAY_MS = Number(process.env.LLM_EXTRACT_DELAY_MS) || 7000;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 
@@ -404,8 +410,23 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // isConfirmedOwner/!USE_AI_CLASSIFICATION выше). Регэксп-парсер
     // (listingDetails.js) — бесплатная замена, работает по тому же
     // rawText независимо от того, какая ветка классификации сработала.
-    const rooms = classification.rooms ?? parseRooms(rawText);
-    const area = classification.area ?? parseArea(rawText);
+    // Площадь/комнаты/этаж/состояние — через LLM (extractListingInfo,
+    // Gemini), с автоматическим откатом на regex ВНУТРИ самой функции,
+    // если LLM недоступна (см. extractListingInfo.js). Пауза после
+    // вызова — чтобы не упереться в лимит бесплатного тира Gemini на
+    // пачке новых объявлений за один прогон (сюда доходят только
+    // новые — см. `if (await isKnown(item.id)) continue` в начале
+    // цикла).
+    const llmInfo = await extractListingInfo(rawText);
+    await sleep(LLM_EXTRACT_DELAY_MS);
+
+    const rooms = classification.rooms ?? llmInfo.rooms;
+    const area = classification.area ?? llmInfo.area_living;
+
+    // Сегмент (новостройка/вторичка) — LLM как последний фолбэк, если
+    // ни структурное поле сайта, ни regex (detectMarketSegment на
+    // строке 184) его не поймали.
+    if (!marketSegment) marketSegment = llmInfo.market_segment;
 
     // Цена за м² — только когда есть и цена, и площадь; используется
     // детектором "ниже рынка" (см. marketStats.js).

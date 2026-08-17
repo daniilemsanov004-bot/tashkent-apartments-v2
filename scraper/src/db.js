@@ -209,3 +209,19 @@ export async function getAllMarketStats() {
   }
   return data || [];
 }
+
+// Ручной "затравочный" ориентир (см. supabase/15_market_stats_manual.sql)
+// — читается редко (раз за прогон, как и getAllMarketStats), используется
+// только когда по группе не хватает реальных объявлений (см. evaluateDeal
+// в marketStats.js). Таблицы может не быть, если миграция ещё не
+// накатана — тогда просто возвращаем пустой список, а не роняем прогон.
+export async function getAllMarketStatsManual() {
+  const { data, error } = await supabase
+    .from('market_stats_manual')
+    .select('group_key, median_price_per_sqm');
+  if (error) {
+    console.warn('Supabase (getAllMarketStatsManual) — таблицы нет или ошибка, пропускаю:', error.message);
+    return [];
+  }
+  return data || [];
+}

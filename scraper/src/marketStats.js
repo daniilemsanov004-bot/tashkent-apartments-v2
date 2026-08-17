@@ -8,6 +8,7 @@ import {
   getStatsSourceListings,
   upsertMarketStats,
   getAllMarketStats,
+  getAllMarketStatsManual,
 } from './db.js';
 import { toUsd } from './priceParser.js';
 
@@ -166,13 +167,34 @@ export async function loadMarketStatsMap() {
 }
 
 /**
+ * Ручной "затравочный" ориентир цены за м² (см.
+ * supabase/15_market_stats_manual.sql) — грузится отдельной Map'ой,
+ * НЕ смешивается с computed-статистикой напрямую, чтобы в evaluateDeal
+ * было явно видно, какой источник сработал (для source: 'manual' в
+ * ответе, см. ниже).
+ * @returns {Promise<Map<string, number>>} group_key -> median_price_per_sqm (USD)
+ */
+export async function loadMarketStatsManualMap() {
+  const rows = await getAllMarketStatsManual();
+  const map = new Map();
+  for (const r of rows) {
+    map.set(r.group_key, r.median_price_per_sqm);
+  }
+  return map;
+}
+
+/**
  * @param {Map} statsMap результат loadMarketStatsMap()
  * @param {{propertyType:string, dealType:string, district:string|null, currency:string|null, pricePerSqm:number|null, marketSegment?:('new_build'|'secondary'|null)}} listingInfo
- * @returns {{belowMarket:boolean, belowMarketPct:number|null, sampleSize:number|null}}
+ * @param {Map<string,number>|null} manualStatsMap результат loadMarketStatsManualMap()
+ *   (необязателен — если не передать, ручной фолбэк просто не используется,
+ *   как раньше; передаётся отдельным аргументом, а не смешивается в
+ *   statsMap, чтобы source в ответе оставался достоверным)
+ * @returns {{belowMarket:boolean, belowMarketPct:number|null, sampleSize:number|null, source:('computed'|'manual'|null)}}
  */
-export function evaluateDeal(statsMap, { propertyType, dealType, district, currency, pricePerSqm, marketSegment = null }) {
+export function evaluateDeal(statsMap, { propertyType, dealType, district, currency, pricePerSqm, marketSegment = null }, manualStatsMap = null) {
   if (!pricePerSqm || !currency) {
-    return { belowMarket: false, belowMarketPct: null, sampleSize: null };
+    return { belowMarket: false, belowMarketPct: null, sampleSize: null, source: null };
   }
 
   // Статистика в group_key больше не хранится по валюте (см. groupKey
@@ -209,14 +231,45 @@ export function evaluateDeal(statsMap, { propertyType, dealType, district, curre
     if (cityStat && cityStat.sample_size >= MIN_SAMPLE) stat = cityStat;
   }
 
-  if (!stat || stat.sample_size < MIN_SAMPLE || !stat.median_price_per_sqm) {
-    return { belowMarket: false, belowMarketPct: null, sampleSize: stat?.sample_size ?? null };
+  // Реальной статистики хватило (хотя бы на каком-то уровне цепочки
+  // выше) — считаем от неё, ручной ориентир вообще не трогаем. Именно
+  // здесь происходит "автоматический подхват": по мере того как в
+  // конкретном районе/сегменте накапливаются реальные объявления,
+  // stat перестаёт быть null/недостаточным сам по себе, и до строк
+  // ниже (ручной фолбэк) выполнение просто не доходит — никакого
+  // отдельного переключателя не нужно.
+  if (stat && stat.sample_size >= MIN_SAMPLE && stat.median_price_per_sqm) {
+    const pct = Math.round((1 - pricePerSqmUsd / stat.median_price_per_sqm) * 1000) / 10;
+    return {
+      belowMarket: pct >= BELOW_MARKET_THRESHOLD_PCT,
+      belowMarketPct: pct,
+      sampleSize: stat.sample_size,
+      source: 'computed',
+    };
   }
 
-  const pct = Math.round((1 - pricePerSqmUsd / stat.median_price_per_sqm) * 1000) / 10; // 1 знак после запятой
-  return {
-    belowMarket: pct >= BELOW_MARKET_THRESHOLD_PCT,
-    belowMarketPct: pct,
-    sampleSize: stat.sample_size,
-  };
+  // Реальных данных недостаточно (или их вообще нет) — последний шаг:
+  // ручной ориентир из market_stats_manual, если он задан для этого
+  // района/сделки/типа. sampleSize=null специально (это не выборка
+  // объявлений, а экспертная прикидка) — так UI/бот могут отличить
+  // "мало объявлений, но это статистика" от "это вообще не статистика".
+  // Приоритет: район -> общегородской (CITY_WIDE) ручной ориентир —
+  // для домов/коммерции по районам данных обычно нет вообще, только
+  // общегородской (см. supabase/15_market_stats_manual.sql).
+  if (manualStatsMap) {
+    const manualMedian =
+      (district && manualStatsMap.get(groupKey(propertyType, dealType, district))) ||
+      manualStatsMap.get(groupKey(propertyType, dealType, CITY_WIDE));
+    if (manualMedian) {
+      const pct = Math.round((1 - pricePerSqmUsd / manualMedian) * 1000) / 10;
+      return {
+        belowMarket: pct >= BELOW_MARKET_THRESHOLD_PCT,
+        belowMarketPct: pct,
+        sampleSize: null,
+        source: 'manual',
+      };
+    }
+  }
+
+  return { belowMarket: false, belowMarketPct: null, sampleSize: stat?.sample_size ?? null, source: null };
 }

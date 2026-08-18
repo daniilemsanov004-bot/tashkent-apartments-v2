@@ -13,7 +13,7 @@ import { DISTRICTS } from '../src/districts.js';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 25000;
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 40000;
 
 // Список районов передаём в промпт как закрытый enum — модель обязана
 // вернуть район ТОЛЬКО из этого списка или null. Это и есть главная
@@ -75,6 +75,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const startedAt = Date.now(); // для лога ниже — сколько реально ждали ответ
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
@@ -160,8 +161,10 @@ export default async function handler(req, res) {
     };
 
     res.status(200).json(result);
+    console.log(`ai-search: успех за ${Date.now() - startedAt}мс`);
+    return;
   } catch (err) {
-    console.warn(`ai-search: ошибка Gemini (${err.message})`);
+    console.warn(`ai-search: ошибка Gemini через ${Date.now() - startedAt}мс (${err.message})`);
     res.status(502).json({ error: 'ai_search_failed' });
   }
 }

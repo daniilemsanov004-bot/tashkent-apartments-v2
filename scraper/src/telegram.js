@@ -75,6 +75,45 @@ function buildHashtags(listing) {
   return tags.filter(Boolean).join(' ');
 }
 
+function buildDealScoreBlock(listing) {
+  if (!listing?.deal_candidate && !(listing?.deal_score >= 70)) return '';
+
+  const tier =
+    listing.deal_score >= 90
+      ? '🔥 очень выгодное'
+      : listing.deal_score >= 80
+        ? '⚡ выгодное'
+        : listing.deal_score >= 70
+          ? '💡 потенциально выгодное'
+          : null;
+
+  const marketLine =
+    listing.below_market_pct != null
+      ? `Цена ниже рынка: ${Math.max(0, Number(listing.below_market_pct)).toFixed(1).replace(/\.0$/, '')}%\n`
+      : 'Цена ниже рынка: данных мало\n';
+  const ownerLine =
+    listing.owner_score != null ? `Owner Score: ${Math.round(Number(listing.owner_score))}/100\n` : '';
+  const historyLine =
+    listing.price_history_count > 1
+      ? `Цена снижалась: ${Math.max(0, Number(listing.price_drop_count) || 0)} раз\n`
+      : '';
+  const lastDropLine =
+    listing.last_price_change_pct != null
+      ? `Последнее изменение: ${Number(listing.last_price_change_pct).toFixed(1).replace(/\.0$/, '')}%\n`
+      : '';
+  const urgencyLine = listing.urgency_signal ? `Срочность: ${listing.urgency_phrase || 'есть сигнал'}\n` : '';
+
+  return (
+    `💎 Deal Score: ${Math.round(Number(listing.deal_score) || 0)}/100${tier ? ` · ${tier}` : ''}\n` +
+    marketLine +
+    ownerLine +
+    historyLine +
+    lastDropLine +
+    urgencyLine +
+    '\n'
+  );
+}
+
 /**
  * Собирает текст сообщения и кнопки — общая логика для обоих
  * назначений (основная группа с /find и тематические супергруппы).
@@ -82,7 +121,7 @@ function buildHashtags(listing) {
 // export — нужна отдельным разовым скриптам (см.
 // scripts/backfill-telegram-segment-labels.js), которые правят текст
 // УЖЕ отправленных сообщений задним числом, не переотправляя их.
-export function buildMessagePayload(listing) {
+export function buildMessagePayload(listing, { includeDealScore = false } = {}) {
   const roomsLine = listing.rooms ? `${listing.rooms}-комн. ` : '';
   const areaLine = listing.area ? `, ${listing.area} м²` : '';
   const districtLine = listing.district ? `📍 ${listing.district}\n` : '';
@@ -117,10 +156,12 @@ export function buildMessagePayload(listing) {
     ? `🔥 На ${listing.below_market_pct}% ниже рыночной цены/м²${segmentLabel} (по ${listing.market_sample_size} объявл.)\n`
     : '';
   const urgencyLine = listing.urgency_signal ? `⚡ В тексте: «${listing.urgency_phrase}»\n` : '';
+  const dealScoreBlock = includeDealScore ? buildDealScoreBlock(listing) : '';
 
   const message =
     `🏠 Новое объявление (${listing.source})\n` +
     `${badge}\n\n` +
+    dealScoreBlock +
     belowMarketLine +
     urgencyLine +
     typeLine +
@@ -271,7 +312,7 @@ export async function notifyDeal(listing) {
     return null;
   }
 
-  const { message, buttons } = buildMessagePayload(listing);
+  const { message, buttons } = buildMessagePayload(listing, { includeDealScore: true });
   const messageThreadId = await getTopicId('deals', listing.district);
 
   try {

@@ -24,6 +24,50 @@ export async function isKnown(id) {
 }
 
 /**
+ * Достаёт уже сохранённое объявление целиком для сравнения с новым
+ * скрапом. Нужен для "повторно увидели тот же id / ту же сущность" —
+ * чтобы не парсить и не отправлять повторно без нужды.
+ */
+export async function getListingById(id) {
+  const { data, error } = await supabase
+    .from('listings')
+    .select(
+      'id, url, title, price, price_value, price_currency, price_per_sqm, raw_text, district, rooms, area, phone, phone_normalized, seller_name, seller_type, confidence, label_kind, label_text, seller_listings_count, market_segment, below_market, below_market_pct, market_sample_size, urgency_signal, urgency_phrase, deal_score, owner_score, deal_candidate, is_duplicate, duplicate_of_id, duplicate_reason, entity_key, price_history, price_history_count, price_drop_count, price_change_count, last_price_change_pct, last_price_change_at, first_seen_price_value, last_seen_price_value, notified, created_at'
+    )
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('Supabase (getListingById) ошибка:', error.message);
+    return null;
+  }
+  return data || null;
+}
+
+/**
+ * Ищет последнюю запись с тем же entity_key. Используется для
+ * подавления дублей между разными id и для определения, считать ли
+ * репост новым событием или просто повтором.
+ */
+export async function getLatestListingByEntityKey(entityKey, excludeId = null) {
+  if (!entityKey) return null;
+  let query = supabase
+    .from('listings')
+    .select(
+      'id, url, title, price, price_value, price_currency, price_per_sqm, phone_normalized, district, rooms, area, entity_key, price_history, price_history_count, price_drop_count, price_change_count, last_price_change_pct, last_price_change_at, first_seen_price_value, last_seen_price_value, deal_score, owner_score, below_market_pct, market_sample_size, urgency_signal, urgency_phrase, notified, created_at'
+    )
+    .eq('entity_key', entityKey)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (excludeId) query = query.neq('id', excludeId);
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    console.error('Supabase (getLatestListingByEntityKey) ошибка:', error.message);
+    return null;
+  }
+  return data || null;
+}
+
+/**
  * @returns {Promise<boolean>} true, если запись реально сохранилась.
  * ВАЖНО: раньше эта функция ничего не возвращала, а ошибку просто
  * логировала — вызывающий код (run.js) не знал, что сохранение не
@@ -34,10 +78,26 @@ export async function isKnown(id) {
  * Telegram ПОВТОРНО. Теперь вызывающий код обязан проверять результат
  * и не слать уведомление, если сохранение не удалось.
  */
-export async function saveListing(listing) {
-  const { error } = await supabase
-    .from('listings')
-    .upsert({ ...listing, contacted: false }, { onConflict: 'id', ignoreDuplicates: true });
+export async function saveListing(listing, previousListing = null) {
+  const preserved = previousListing
+    ? {
+        contacted: previousListing.contacted ?? false,
+        contacted_by: previousListing.contacted_by ?? null,
+        contacted_at: previousListing.contacted_at ?? null,
+        assigned_to: previousListing.assigned_to ?? null,
+        assigned_at: previousListing.assigned_at ?? null,
+        notes: previousListing.notes ?? null,
+        flagged_agent: previousListing.flagged_agent ?? false,
+        flagged_by: previousListing.flagged_by ?? null,
+        flagged_at: previousListing.flagged_at ?? null,
+        telegram_chat_id: previousListing.telegram_chat_id ?? null,
+        telegram_message_id: previousListing.telegram_message_id ?? null,
+        telegram_deleted: previousListing.telegram_deleted ?? false,
+        notified: previousListing.notified ?? false,
+      }
+    : { contacted: false };
+  const payload = { ...listing, ...preserved };
+  const { error } = await supabase.from('listings').upsert(payload, { onConflict: 'id' });
   if (error) {
     console.error('Supabase (saveListing) ошибка:', error.message);
     return false;
@@ -163,6 +223,7 @@ export async function getStatsSourceListings(days) {
     .select('price_per_sqm, district, property_type, deal_type, price_currency, market_segment')
     .gte('created_at', cutoff)
     .not('price_per_sqm', 'is', null)
+    .neq('is_duplicate', true)
     .in('label_kind', ['owner', 'unchecked']);
   if (error) {
     console.error('Supabase (getStatsSourceListings) ошибка:', error.message);

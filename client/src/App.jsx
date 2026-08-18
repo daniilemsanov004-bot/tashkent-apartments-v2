@@ -216,6 +216,14 @@ const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted,
           )}
         </p>
       )}
+      {(listing.deal_candidate || Number(listing.deal_score) >= 70) && (
+        <p className="card-deal-line">
+          <span className="deal-badge deal-badge-score">
+            💎 Deal Score {Math.round(Number(listing.deal_score) || 0)}/100
+            {listing.owner_score != null ? ` · Owner ${Math.round(Number(listing.owner_score))}` : ''}
+          </span>
+        </p>
+      )}
       <div className="card-bottom">
         <span className="price">{listing.price || 'цена не указана'}</span>
         <div className="card-actions">

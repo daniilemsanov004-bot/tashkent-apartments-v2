@@ -10,7 +10,13 @@ import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting
 import { fetchJoymeeListings, fetchJoymeeDetails } from './scrapers/joymee.js';
 import { classifyListing, labelFor, SELLER_LISTINGS_AGENT_THRESHOLD } from './classify.js';
 import { notifyAlert, notifyToTopicGroup, notifyDeal } from './telegram.js';
-import { isKnown, saveListing, markNotified, countListingsByPhone } from './db.js';
+import {
+  getListingById,
+  getLatestListingByEntityKey,
+  saveListing,
+  markNotified,
+  countListingsByPhone,
+} from './db.js';
 import { normalizeDistrict } from './districts.js';
 import { parsePrice, toUsd } from './priceParser.js';
 import { cleanAgentBacklog } from './cleanAgentMessages.js';
@@ -20,6 +26,15 @@ import { extractListingInfo } from './extractListingInfo.js';
 import { findUrgencySignal } from './urgencySignals.js';
 import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
 import { detectMarketSegment } from './marketSegment.js';
+import {
+  makeEntityKey,
+  summarizePriceHistory,
+  computeOwnerScore,
+  computeDealScore,
+  shouldNotifyDealCandidate,
+  isSignificantPriceChange,
+  isDuplicatePriceChange,
+} from './dealScoring.js';
 
 // Тот же курс, что и в marketStats.js (см. пояснение там) — нужен тут
 // для санити-проверки price_per_sqm ниже, ДО того как значение вообще
@@ -42,9 +57,17 @@ const PHONE_REUSE_AGENT_THRESHOLD = 2;
 const LLM_EXTRACT_DELAY_MS = Number(process.env.LLM_EXTRACT_DELAY_MS) || 7000;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
+const DEAL_SCORE_MIN_MARKET_COMPONENT = Number(process.env.DEAL_SCORE_MIN_MARKET_COMPONENT) || 10;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function looksLikePersonName(name) {
+  const text = String(name || '').trim();
+  if (!text) return false;
+  if (/(agency|estate|realty|company|group|недвиж|риелт|агентств|broker)/i.test(text)) return false;
+  return /^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\s'.-]{1,50}$/.test(text);
 }
 
 // Между тремя запросами подряд к OLX (квартиры/дома/коммерция) делаем
@@ -98,7 +121,17 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
   let sellerCheckedCount = 0;
 
   for (const item of items) {
-    if (await isKnown(item.id)) continue;
+    const existingById = await getListingById(item.id);
+    const listPrice = parsePrice(item.price);
+    const hasBackfilledScoring =
+      existingById?.deal_score != null && existingById?.owner_score != null && existingById?.price_history_count != null;
+    const sameKnownPrice =
+      existingById &&
+      existingById.price_value != null &&
+      listPrice.value != null &&
+      Number(existingById.price_value) === Number(listPrice.value) &&
+      String(existingById.price_currency || '').toUpperCase() === String(listPrice.currency || '').toUpperCase();
+    if (existingById && sameKnownPrice && hasBackfilledScoring) continue;
 
     let rawText = item.title;
     let sellerName = null;
@@ -214,8 +247,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // см. agentSignals.js). Не зависит от сайта/вёрстки вообще —
     // работает даже если fetchDetails выше упал и остался только
     // заголовок (rawText = item.title по умолчанию).
+    let textSignal = null;
     if (!isConfirmedAgent) {
-      const textSignal = findAgentTextSignal(rawText);
+      textSignal = findAgentTextSignal(rawText);
       if (textSignal) {
         isConfirmedAgent = true;
         confirmedAgentReason = `текст объявления содержит "${textSignal}"`;
@@ -225,8 +259,10 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // Проверка "этот же номер телефона уже был на других
     // объявлениях" — тоже не зависит от сайта/вёрстки, работает по
     // своей же базе. Порог см. PHONE_REUSE_AGENT_THRESHOLD выше.
+    let phoneReuseCount = 0;
     if (!isConfirmedAgent && phoneNormalized) {
       const priorCount = await countListingsByPhone(phoneNormalized, item.id);
+      phoneReuseCount = priorCount;
       if (priorCount >= PHONE_REUSE_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
         confirmedAgentReason = `тот же номер телефона уже на ${priorCount} других объявлениях`;
@@ -402,7 +438,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     // Числовая цена + валюта — нужны, чтобы бот мог фильтровать по
     // диапазону цены (price остаётся текстом для отображения как есть).
-    const { value: priceValue, currency: priceCurrency } = parsePrice(item.price);
+    const { value: priceValue, currency: priceCurrency } = listPrice;
 
     // Площадь/комнаты — раньше это давала ТОЛЬКО ИИ-классификация
     // (сейчас отключена, classification.rooms/area всегда null не
@@ -480,6 +516,94 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
         })
       : { belowMarket: false, belowMarketPct: null, sampleSize: null };
 
+    const sellerNameLooksLikePerson = looksLikePersonName(sellerName);
+    const ownerScoreResult = computeOwnerScore({
+      isConfirmedOwner,
+      isConfirmedAgent,
+      sellerListingsCount,
+      phoneReuseCount,
+      sellerNameLooksLikeAgent,
+      textAgentSignal: textSignal,
+      sellerIsOrganization: !!item.seller_is_organization,
+      sellerName,
+      sellerNameLooksLikePerson,
+      source: item.source,
+    });
+
+    const entityKey = makeEntityKey({
+      ...item,
+      title: item.title,
+      seller_name: sellerName,
+      phone_normalized: phoneNormalized,
+      district,
+      rooms,
+      area,
+      price_value: priceValue,
+      price_currency: priceCurrency,
+      image_url: item.image_url,
+    });
+
+    const currentPriceUsd =
+      priceValue && priceCurrency ? toUsd({ value: priceValue, currency: priceCurrency }, EXCHANGE_RATE_USD_UZS) : null;
+    const previousForSameId = existingById && existingById.id === item.id ? existingById : null;
+    const previousPriceUsd =
+      previousForSameId?.price_value && previousForSameId?.price_currency
+        ? toUsd(
+            { value: previousForSameId.price_value, currency: previousForSameId.price_currency },
+            EXCHANGE_RATE_USD_UZS
+          )
+        : null;
+    const sameIdPriceChanged =
+      isSignificantPriceChange(previousPriceUsd, currentPriceUsd) ||
+      (previousForSameId && previousForSameId.price_value == null && priceValue != null);
+
+    const priceHistorySummary = summarizePriceHistory(
+      previousForSameId?.price_history,
+      {
+        observed_at: new Date().toISOString(),
+        price_value: priceValue,
+        price_currency: priceCurrency,
+        price_text: item.price || null,
+        price_per_sqm: pricePerSqm,
+      },
+      EXCHANGE_RATE_USD_UZS
+    );
+
+    const dealScoreResult = computeDealScore({
+      belowMarketPct,
+      marketSampleSize: sampleSize,
+      ownerScore: ownerScoreResult.score,
+      priceHistory: priceHistorySummary,
+      urgencyPhrase,
+    });
+
+    const latestEntityListing = previousForSameId || (await getLatestListingByEntityKey(entityKey, item.id));
+    const latestEntityUsd =
+      latestEntityListing?.price_value && latestEntityListing?.price_currency
+        ? toUsd(
+            { value: latestEntityListing.price_value, currency: latestEntityListing.price_currency },
+            EXCHANGE_RATE_USD_UZS
+          )
+        : null;
+    const sameEntityExists = !!latestEntityListing;
+    const duplicateByEntity =
+      !previousForSameId &&
+      sameEntityExists &&
+      !sameIdPriceChanged &&
+      (isDuplicatePriceChange(latestEntityUsd, currentPriceUsd) || currentPriceUsd == null || latestEntityUsd == null);
+    const shouldSendDeal = !isConfirmedAgent && !duplicateByEntity && shouldNotifyDealCandidate(dealScoreResult.score);
+    const dealCandidate =
+      shouldSendDeal &&
+      (dealScoreResult.components.market >= DEAL_SCORE_MIN_MARKET_COMPONENT ||
+        priceHistorySummary.dropCount >= 1 ||
+        ownerScoreResult.score >= 80);
+
+    const duplicateReason = duplicateByEntity
+      ? latestEntityUsd && currentPriceUsd
+        ? `тот же объект уже был в базе, цена изменилась менее чем на ${Number(process.env.DUPLICATE_PRICE_CHANGE_THRESHOLD_PCT) || 5}%`
+        : 'тот же объект уже был в базе'
+      : null;
+
     const listing = {
       ...item,
       raw_text: rawText,
@@ -496,6 +620,24 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       market_segment: marketSegment,
       urgency_signal: !!urgencyPhrase,
       urgency_phrase: urgencyPhrase,
+      entity_key: entityKey,
+      is_duplicate: duplicateByEntity,
+      duplicate_of_id: duplicateByEntity ? latestEntityListing.id : null,
+      duplicate_reason: duplicateReason,
+      deal_candidate: dealCandidate,
+      deal_score: dealScoreResult.score,
+      owner_score: ownerScoreResult.score,
+      deal_score_breakdown: dealScoreResult.components,
+      owner_score_breakdown: ownerScoreResult,
+      price_history: priceHistorySummary.history,
+      price_history_count: priceHistorySummary.count,
+      price_drop_count: priceHistorySummary.dropCount,
+      price_change_count: priceHistorySummary.changeCount,
+      first_seen_price_value: previousForSameId?.first_seen_price_value ?? priceHistorySummary.firstSeenValue,
+      last_seen_price_value: priceHistorySummary.lastSeenValue,
+      last_price_change_pct: priceHistorySummary.lastChangePct,
+      last_price_change_at: priceHistorySummary.lastObservedAt,
+      last_seen_at: priceHistorySummary.lastObservedAt,
       rooms,
       area,
       phone: effectivePhone,
@@ -510,13 +652,24 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     delete listing.phone_from_details; // тоже служебное — уже перенесено в phone
     delete listing.raw_district; // тоже служебное — уже перенесено в district/district_raw
 
-    const saved = await saveListing(listing);
+    const saved = await saveListing(listing, existingById);
     if (!saved) {
       // Не сохранилось в базу — не шлём уведомление вообще (иначе
       // получим дубль на следующем прогоне, см. комментарий в db.js).
       // Просто пропускаем — при следующем запуске isKnown() снова
       // увидит его как "новое" и попробует сохранить+отправить с нуля.
       console.error(`[${sourceLabel}] пропускаю уведомление — не удалось сохранить в базу: ${listing.title}`);
+      continue;
+    }
+
+    if (previousForSameId && !sameIdPriceChanged) {
+      await markNotified(listing.id);
+      continue;
+    }
+
+    if (listing.is_duplicate) {
+      await markNotified(listing.id);
+      console.log(`[${sourceLabel}] пропущен дубль (${listing.duplicate_reason || 'duplicate'}): ${listing.title}`);
       continue;
     }
 
@@ -553,7 +706,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // отправку выше: пользователь по-прежнему видит все объявления
     // своего района в привычном месте, а "Выгодные" — это фильтр
     // поверх, а не альтернативный канал.
-    if (listing.below_market) {
+    if (listing.deal_candidate) {
       try {
         await notifyDeal(listing);
       } catch (err) {

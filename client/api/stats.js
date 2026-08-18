@@ -30,6 +30,7 @@ export default async function handler(req, res) {
     if (req.query.showAgents !== 'true') {
       query = query.neq('label_kind', 'agent').neq('flagged_agent', true);
     }
+    query = query.neq('is_duplicate', true);
     return query;
   }
 
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
       base().gte('created_at', todayCutoff.toISOString()),
       base().in('label_kind', ['owner', 'unchecked']),
       base().neq('contacted', true),
-      base().eq('below_market', true), // см. scraper/src/marketStats.js
+      base().eq('deal_candidate', true),
     ]);
     for (const r of [totalRes, todayRes, ownersRes, notContactedRes, dealsRes]) {
       if (r.error) throw new Error(r.error.message);

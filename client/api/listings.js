@@ -40,20 +40,20 @@ export default async function handler(req, res) {
   } else if (sort === 'price_desc') {
     query = query.order('price_value', { ascending: false, nullsFirst: false });
   } else if (sort === 'deal_pct') {
-    // Самые выгодные (сильнее всего ниже рыночной цены/м²) — первыми.
-    // См. below_market_pct в scraper/src/marketStats.js.
-    query = query.order('below_market_pct', { ascending: false, nullsFirst: false });
+    // Самые выгодные — по новому Deal Score, а при равенстве уже по старому
+    // отклонению от рынка. Так вверху остаются не просто "дешёвые",
+    // а действительно сильные сделки.
+    query = query.order('deal_score', { ascending: false, nullsFirst: false }).order('below_market_pct', { ascending: false, nullsFirst: false });
   } else {
     query = query.order('created_at', { ascending: false });
   }
 
-  // Раздел "🔥 Выгодные" на сайте — только объявления заметно ниже
-  // рыночной цены/м² (below_market проставляется скрапером, см.
-  // scraper/src/marketStats.js). Остальные фильтры (район, тип,
-  // цена и т.п.) продолжают применяться поверх этого же запроса —
-  // это не отдельная страница с своим API, а сужение того же запроса.
+  // Раздел "🔥 Выгодные" на сайте — только объявления, которые прошли
+  // новый Deal Score. Остальные фильтры (район, тип, цена и т.п.)
+  // продолжают применяться поверх этого же запроса — это не отдельная
+  // страница с своим API, а сужение того же запроса.
   if (req.query.deals === 'true') {
-    query = query.eq('below_market', true);
+    query = query.eq('deal_candidate', true);
   }
 
   if (days !== null) {
@@ -115,6 +115,8 @@ export default async function handler(req, res) {
   if (req.query.assigned === 'none') {
     query = query.is('assigned_to', null);
   }
+
+  query = query.neq('is_duplicate', true);
 
   const from = page * pageSize;
   const to = from + pageSize - 1;

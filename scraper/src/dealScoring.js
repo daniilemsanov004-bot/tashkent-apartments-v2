@@ -36,6 +36,14 @@ function observationToUsd(observation, exchangeRateUsdUzs) {
 }
 
 export function makeEntityKey(listing) {
+  // Приоритет: телефон — единственный признак, который реально
+  // связывает одно и то же объявление между РАЗНЫМИ источниками
+  // (OLX/Uybor/Domtut/Realting) — сам объект недвижимости продают
+  // по одному номеру, а URL у каждого сайта свой. НЕ включает
+  // price_value/price_currency — текущая цена не идентификатор
+  // объекта, объявление остаётся тем же самым объектом и после
+  // изменения цены (иначе ломается история цены и защита от
+  // повторной отправки — см. аудит от 19.08.2026).
   const phone = listing.phone_normalized || listing.phoneNormalized || null;
   if (phone) return `phone:${phone}`;
 
@@ -352,4 +360,3 @@ export function isDuplicatePriceChange(previousUsd, currentUsd) {
   const pct = Math.abs(((currentUsd - previousUsd) / previousUsd) * 100);
   return pct < DEFAULT_DUPLICATE_PRICE_CHANGE_PCT;
 }
-

@@ -1,0 +1,98 @@
+--- v2fixed_orig/scraper/src/dealScoring.js	2026-08-19 01:47:04.000000000 +0000
++++ v2fixed/scraper/src/dealScoring.js	2026-08-18 21:17:47.056941736 +0000
+@@ -36,27 +36,35 @@
+ }
+ 
+ export function makeEntityKey(listing) {
+-  const phone = normalizeText(listing.phone_normalized || listing.phoneNormalized || '');
+-  const url = normalizeText(listing.url || '');
+-  const image = normalizeText(listing.image_url || '');
++  // Приоритет: телефон — единственный признак, который реально
++  // связывает одно и то же объявление между РАЗНЫМИ источниками
++  // (OLX/Uybor/Domtut/Realting) — сам объект недвижимости продают
++  // по одному номеру, а URL у каждого сайта свой. НЕ включает
++  // price_value/price_currency — текущая цена не идентификатор
++  // объекта, объявление остаётся тем же самым объектом и после
++  // изменения цены (иначе ломается история цены и защита от
++  // повторной отправки — см. аудит от 19.08.2026).
++  const phone = listing.phone_normalized || listing.phoneNormalized || null;
++  if (phone) return `phone:${phone}`;
++
++  const url = listing.url ? normalizeText(listing.url) : null;
++  if (url) return `url:${url}`;
++
++  const image = listing.image_url ? normalizeText(listing.image_url) : '';
+   const base = [
++    listing.source,
+     listing.deal_type,
+     listing.property_type,
+     listing.district,
+     listing.rooms,
+     listing.area,
+-    listing.price_value,
+-    listing.price_currency,
+     listing.title,
+     listing.seller_name,
+-    phone,
+     image,
+-    url,
+   ]
+     .map(normalizeText)
+     .join('|');
+-
+-  return `listing:${hash(base)}`;
++  return `text:${hash(base)}`;
+ }
+ 
+ export function summarizePriceHistory(previousHistory, currentObservation, exchangeRateUsdUzs) {
+===================================
+--- v2fixed_orig/scraper/src/aiProviders.js	2026-08-19 01:53:52.000000000 +0000
++++ v2fixed/scraper/src/aiProviders.js	2026-08-18 21:18:35.030949439 +0000
+@@ -47,7 +47,17 @@
+         {
+           system_instruction: { parts: [{ text: systemPrompt }] },
+           contents: [{ parts: [{ text: userText }] }],
+-          generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: maxTokens },
++          // temperature/top_p/top_k официально задепрекейчены для
++          // текущих Gemini flash-моделей — не отправляем их.
++          // thinkingConfig.thinkingLevel: 'low' — по умолчанию у этих
++          // моделей thinkingLevel medium (модель "размышляет" перед
++          // ответом), что для простых задач извлечения полей избыточно
++          // и было реальной причиной таймаутов (см. историю проекта).
++          generationConfig: {
++            responseMimeType: 'application/json',
++            maxOutputTokens: maxTokens,
++            thinkingConfig: { thinkingLevel: 'low' },
++          },
+         },
+         {
+           headers: { 'content-type': 'application/json' },
+@@ -95,7 +105,7 @@
+   return parseJsonResponse(text);
+ }
+ 
+-function providerPlan() {
++export function providerPlan() {
+   const plan = [];
+   if (GEMINI_API_KEY) plan.push({ name: 'gemini', enabled: true });
+   if (AI_FALLBACK_ENABLED && GROQ_API_KEY) plan.push({ name: 'groq', enabled: true });
+===================================
+--- v2fixed_orig/client/api/_aiProviders.js	2026-08-19 01:54:04.000000000 +0000
++++ v2fixed/client/api/_aiProviders.js	2026-08-18 21:18:03.156722206 +0000
+@@ -59,7 +59,15 @@
+           body: JSON.stringify({
+             system_instruction: { parts: [{ text: systemPrompt }] },
+             contents: [{ parts: [{ text: userText }] }],
+-            generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: maxTokens },
++            // temperature/top_p/top_k задепрекейчены для текущих
++            // Gemini flash-моделей — не отправляем. thinkingLevel:'low'
++            // отключает лишнее "размышление" модели — ранее найденный
++            // фикс таймаутов, см. историю проекта.
++            generationConfig: {
++              responseMimeType: 'application/json',
++              maxOutputTokens: maxTokens,
++              thinkingConfig: { thinkingLevel: 'low' },
++            },
+           }),
+         },
+         timeoutMs

@@ -554,6 +554,8 @@ async function handleAiSearch(chatId, userId, queryText) {
         ? '⚠️ ИИ-поиск не настроен (нет GEMINI_API_KEY на сервере).'
         : parsed.reason === 'unparseable'
           ? '🤔 Не получилось распознать запрос — попробуйте переформулировать.'
+          : parsed.reason === 'fallback_exhausted'
+            ? '⚠️ ИИ-поиск не смог ответить ни через одного провайдера — попробуйте позже.'
           : '⏳ ИИ-поиск сейчас перегружен или недоступен — попробуйте через минуту.';
     if (thinkingMessageId) await editMessageText(chatId, thinkingMessageId, text);
     else await sendMessage(chatId, text);

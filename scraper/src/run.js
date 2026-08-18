@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { fetchOlxListings, fetchOlxDetails, fetchOlxSellerListingsCount, isPlausiblePrice } from './scrapers/olx.js';
 import { fetchUyborListings, fetchUyborDetails } from './scrapers/uybor.js';
 import { fetchRealtingListings, fetchRealtingDetails } from './scrapers/realting.js';
+import { fetchDomtutListings, fetchDomtutDetails } from './scrapers/domtut.js';
 // Joymee: endpoint и структура ответа подтверждены вживую 11.08.2026
 // через DevTools (см. шапку scrapers/joymee.js). Включена в main()
 // пока только для продажи квартир — единственной подтверждённой
@@ -58,9 +59,38 @@ const LLM_EXTRACT_DELAY_MS = Number(process.env.LLM_EXTRACT_DELAY_MS) || 7000;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 const DEAL_SCORE_MIN_MARKET_COMPONENT = Number(process.env.DEAL_SCORE_MIN_MARKET_COMPONENT) || 10;
+const REALTING_ENABLED = process.env.REALTING_ENABLED !== 'false';
+const DOMTUT_ENABLED = process.env.DOMTUT_ENABLED !== 'false';
+
+const detailsCache = new Map();
+const sellerCountCache = new Map();
+const entityLookupCache = new Map();
+const phoneCountCache = new Map();
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function getCachedDetails(fetchDetails, url) {
+  const key = `${fetchDetails.name || 'details'}:${url}`;
+  if (detailsCache.has(key)) return detailsCache.get(key);
+  const promise = Promise.resolve(fetchDetails(url)).catch((err) => {
+    detailsCache.delete(key);
+    throw err;
+  });
+  detailsCache.set(key, promise);
+  return promise;
+}
+
+async function getCachedSellerCount(fetchSellerCount, url) {
+  const key = `${fetchSellerCount.name || 'sellerCount'}:${url}`;
+  if (sellerCountCache.has(key)) return sellerCountCache.get(key);
+  const promise = Promise.resolve(fetchSellerCount(url)).catch((err) => {
+    sellerCountCache.delete(key);
+    throw err;
+  });
+  sellerCountCache.set(key, promise);
+  return promise;
 }
 
 function looksLikePersonName(name) {
@@ -145,7 +175,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // (details.marketSegment ниже, там доступно полное описание).
     let marketSegment = item.market_segment ?? null;
     try {
-      const details = await fetchDetails(item.url);
+      const details = await getCachedDetails(fetchDetails, item.url);
       if (details?.description) rawText = `${item.title}\n${details.description}`;
       if (details?.marketSegment) marketSegment = details.marketSegment;
       sellerName = details?.sellerName || item.seller_name || null;
@@ -261,11 +291,16 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // своей же базе. Порог см. PHONE_REUSE_AGENT_THRESHOLD выше.
     let phoneReuseCount = 0;
     if (!isConfirmedAgent && phoneNormalized) {
-      const priorCount = await countListingsByPhone(phoneNormalized, item.id);
-      phoneReuseCount = priorCount;
-      if (priorCount >= PHONE_REUSE_AGENT_THRESHOLD) {
+      const phoneCacheKey = `${phoneNormalized}:${item.id}`;
+      if (phoneCountCache.has(phoneCacheKey)) {
+        phoneReuseCount = phoneCountCache.get(phoneCacheKey);
+      } else {
+        phoneReuseCount = await countListingsByPhone(phoneNormalized, item.id);
+        phoneCountCache.set(phoneCacheKey, phoneReuseCount);
+      }
+      if (phoneReuseCount >= PHONE_REUSE_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
-        confirmedAgentReason = `тот же номер телефона уже на ${priorCount} других объявлениях`;
+        confirmedAgentReason = `тот же номер телефона уже на ${phoneReuseCount} других объявлениях`;
       }
     }
 
@@ -282,7 +317,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     let sellerCheckUnavailable = false;
 
     if (!isConfirmedAgent && fetchSellerCount && sellerListingsUrl) {
-      sellerListingsCount = await fetchSellerCount(sellerListingsUrl);
+      sellerListingsCount = await getCachedSellerCount(fetchSellerCount, sellerListingsUrl);
       if (sellerListingsCount !== null && sellerListingsCount > SELLER_LISTINGS_AGENT_THRESHOLD) {
         isConfirmedAgent = true;
         confirmedAgentReason = `${sellerListingsCount} объявлений`;
@@ -577,7 +612,12 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       urgencyPhrase,
     });
 
-    const latestEntityListing = previousForSameId || (await getLatestListingByEntityKey(entityKey, item.id));
+    const entityCacheKey = `${entityKey}:${item.id}`;
+    const latestEntityListing =
+      previousForSameId || entityLookupCache.get(entityCacheKey) || (await getLatestListingByEntityKey(entityKey, item.id));
+    if (!previousForSameId && !entityLookupCache.has(entityCacheKey)) {
+      entityLookupCache.set(entityCacheKey, latestEntityListing);
+    }
     const latestEntityUsd =
       latestEntityListing?.price_value && latestEntityListing?.price_currency
         ? toUsd(
@@ -746,6 +786,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 const OLX_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 const UYBOR_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 const REALTING_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
+const DOMTUT_PROPERTY_TYPES = ['apartment', 'house', 'commercial'];
 // Joymee: квартиры/дома/коммерция для ПРОДАЖИ И АРЕНДЫ — все 6
 // комбинаций подтверждены вживую (11.08.2026, см. JOYMEE_CATEGORY в
 // scrapers/joymee.js).
@@ -767,8 +808,15 @@ async function main() {
   for (const propertyType of UYBOR_PROPERTY_TYPES) {
     await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'sale', null, propertyType, marketStatsMap);
   }
-  for (const propertyType of REALTING_PROPERTY_TYPES) {
-    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType, marketStatsMap);
+  if (REALTING_ENABLED) {
+    for (const propertyType of REALTING_PROPERTY_TYPES) {
+      await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'sale', null, propertyType, marketStatsMap);
+    }
+  }
+  if (DOMTUT_ENABLED) {
+    for (const propertyType of DOMTUT_PROPERTY_TYPES) {
+      await processSource(fetchDomtutListings, fetchDomtutDetails, 'domtut', 'sale', null, propertyType, marketStatsMap);
+    }
   }
   // Joymee: endpoint/поля подтверждены вживую 11.08.2026 (см. шапку
   // scrapers/joymee.js) — продажа квартир/домов/коммерции (все три
@@ -787,8 +835,15 @@ async function main() {
   for (const propertyType of UYBOR_PROPERTY_TYPES) {
     await processSource(fetchUyborListings, fetchUyborDetails, 'uybor', 'rent', null, propertyType, marketStatsMap);
   }
-  for (const propertyType of REALTING_PROPERTY_TYPES) {
-    await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType, marketStatsMap);
+  if (REALTING_ENABLED) {
+    for (const propertyType of REALTING_PROPERTY_TYPES) {
+      await processSource(fetchRealtingListings, fetchRealtingDetails, 'realting', 'rent', null, propertyType, marketStatsMap);
+    }
+  }
+  if (DOMTUT_ENABLED) {
+    for (const propertyType of DOMTUT_PROPERTY_TYPES) {
+      await processSource(fetchDomtutListings, fetchDomtutDetails, 'domtut', 'rent', null, propertyType, marketStatsMap);
+    }
   }
   // Joymee-аренда: deal_type=2 подтверждён вживую 11.08.2026 (см.
   // JOYMEE_DEAL_TYPE в scrapers/joymee.js), квартиры/дом/коммерция для

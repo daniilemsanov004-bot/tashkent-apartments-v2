@@ -1,51 +1,17 @@
 // ИИ-извлечение полей объявления — заменяет regex из listingDetails.js
 // там, где регекс путается (площадь дома vs площадь участка, ремонт,
-// юр.риски и т.п.). Поддерживает ДВА способа подключения:
+// юр.риски и т.п.). Использует единый AIProvider-chain:
+// Gemini → Groq → Cerebras → OpenRouter, если включён AI_FALLBACK_ENABLED.
 //
-// СПОСОБ 1 — Google Gemini напрямую (рекомендуется, официальный
-// бесплатный тир с документированными лимитами, без посредников):
-//   GEMINI_API_KEY — ключ с https://aistudio.google.com/apikey
-//   GEMINI_MODEL — например "gemini-3.6-flash" (необязательно,
-//     по умолчанию используется именно эта модель)
-//
-// СПОСОБ 2 — любой OpenAI-совместимый роутер (OrcaRouter, TokenRouter
-// и т.п.) — оставлен как запасной вариант, но на практике у бесплатных
-// тарифов таких роутеров лимиты непрозрачны (см. обсуждение в чате —
-// 429 без деталей в логах роутера):
-//   LLM_API_BASE_URL, LLM_API_KEY, LLM_MODEL
-//
-// Если задан GEMINI_API_KEY — используется способ 1 (приоритет).
-// Иначе, если задан LLM_API_BASE_URL — способ 2.
-// Если не задано ничего — тихий откат на regex.
-//
-// В любом случае: если запрос падает/висит/отвечает не-JSON'ом,
-// extractListingInfo() откатывается на старый regex-парсер
+// Если все провайдеры недоступны или ответ не распарсился как JSON,
+// функция не падает, а откатывается на старый regex-парсер
 // (parseArea/parseRooms) и возвращает partial=true, чтобы это было
-// видно в логах — скрапер не должен падать из-за нестабильности
-// внешнего API.
+// видно в логах — скрапер не должен ломать весь прогон из-за
+// нестабильности внешнего API.
 
-import axios from 'axios';
 import { parseArea, parseRooms } from './listingDetails.js';
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// "-latest" — плавающий алиас от Google, всегда указывает на текущую
-// актуальную Flash-модель, не привязан к конкретной версии (2.5, 3.5
-// и т.п.) — так что не протухнет, когда Google выпустит следующую.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-
-const LLM_API_BASE_URL = process.env.LLM_API_BASE_URL;
-const LLM_API_KEY = process.env.LLM_API_KEY;
-const LLM_MODEL = process.env.LLM_MODEL;
+import { runAiJsonChain } from './aiProviders.js';
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 15000;
-
-// Статусы, на которых имеет смысл повторить запрос — временная
-// перегрузка/лимит на стороне Gemini (503 "high demand", 429 и т.п.),
-// а не наша ошибка (тот же список, что и в client/api/_aiSearch.js —
-// не выносил в общий модуль: scraper/ и client/ разные деплоймент-
-// юниты, та же конвенция дублирования, что и у похожей логики в
-// других местах проекта).
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const RETRY_DELAY_MS = 800;
 
 const SYSTEM_PROMPT = `Ты извлекаешь структурированные данные из текста объявления о недвижимости в Ташкенте.
 
@@ -113,98 +79,23 @@ export async function extractListingInfo(rawText) {
     };
   }
 
-  // СПОСОБ 1 — Gemini напрямую, приоритетный вариант.
-  if (GEMINI_API_KEY) {
-    const requestOnce = () =>
-      axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-        {
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ parts: [{ text: rawText.slice(0, 3000) }] }],
-          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-        },
-        {
-          headers: { 'content-type': 'application/json' },
-          params: { key: GEMINI_API_KEY },
-          timeout: LLM_TIMEOUT_MS,
-        }
-      );
+  try {
+    const result = await runAiJsonChain({
+      taskName: 'extractListingInfo',
+      systemPrompt: SYSTEM_PROMPT,
+      userText: rawText.slice(0, 3000),
+      timeoutMs: LLM_TIMEOUT_MS,
+      maxTokens: 300,
+    });
 
-    // До 2 попыток — вторая только после короткой паузы и только если
-    // первая упала именно по временной причине (см. RETRYABLE_STATUSES).
-    // Axios при ошибочном статусе бросает исключение (не возвращает
-    // response как fetch), так что статус смотрим через err.response.status.
-    let response;
-    let lastErr;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        response = await requestOnce();
-        lastErr = null;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const status = err.response?.status;
-        const isRetryable = !status || RETRYABLE_STATUSES.has(status); // нет status = сетевая ошибка/таймаут, тоже стоит повторить
-        if (attempt === 2 || !isRetryable) break;
-        console.warn(
-          `extractListingInfo: попытка 1 не удалась (${status ? `статус ${status}` : err.message}), похоже на временную перегрузку — повтор через ${RETRY_DELAY_MS}мс`
-        );
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-      }
-    }
-
-    if (lastErr) {
-      console.warn(`extractListingInfo: ошибка Gemini (после возможного повтора: ${lastErr.message}), откат на regex`);
+    if (!result.ok) {
+      console.warn(`extractListingInfo: AI chain exhausted (${result.reason}), откат на regex`);
       return regexFallback();
     }
 
-    try {
-      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        console.warn('extractListingInfo: пустой ответ от Gemini, откат на regex');
-        return regexFallback();
-      }
-      return { ...parseModelJson(text), source: 'llm_gemini' };
-    } catch (err) {
-      console.warn(`extractListingInfo: ошибка разбора ответа Gemini (${err.message}), откат на regex`);
-      return regexFallback();
-    }
+    return { ...parseModelJson(JSON.stringify(result.data)), source: `llm_${result.provider}` };
+  } catch (err) {
+    console.warn(`extractListingInfo: ошибка AI chain (${err.message}), откат на regex`);
+    return regexFallback();
   }
-
-  // СПОСОБ 2 — запасной вариант, любой OpenAI-совместимый роутер.
-  if (LLM_API_BASE_URL && LLM_API_KEY && LLM_MODEL) {
-    try {
-      const response = await axios.post(
-        `${LLM_API_BASE_URL.replace(/\/$/, '')}/chat/completions`,
-        {
-          model: LLM_MODEL,
-          max_tokens: 300,
-          temperature: 0,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: rawText.slice(0, 3000) },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${LLM_API_KEY}`,
-            'content-type': 'application/json',
-          },
-          timeout: LLM_TIMEOUT_MS,
-        }
-      );
-
-      const text = response.data?.choices?.[0]?.message?.content;
-      if (!text) {
-        console.warn('extractListingInfo: пустой ответ от роутера, откат на regex');
-        return regexFallback();
-      }
-      return { ...parseModelJson(text), source: 'llm_router' };
-    } catch (err) {
-      console.warn(`extractListingInfo: ошибка роутера (${err.message}), откат на regex`);
-      return regexFallback();
-    }
-  }
-
-  return regexFallback();
 }

@@ -41,10 +41,10 @@ export default async function handler(req, res) {
     // разные, отдельно показываемые пользователю причины).
     const statusByReason = {
       unavailable: 503,
-      rate_limited: 503,
       timeout_or_network: 504,
       bad_response: 502,
       unparseable: 422,
+      fallback_exhausted: 502,
     };
     res.status(statusByReason[result.reason] || 502).json({ error: `ai_search_${result.reason}`, reason: result.reason });
     return;

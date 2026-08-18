@@ -33,8 +33,20 @@ export default async function handler(req, res) {
   const result = await parseSearchQuery(text);
 
   if (!result.ok) {
-    const statusByReason = { unavailable: 503 };
-    res.status(statusByReason[result.reason] || 502).json({ error: `ai_search_${result.reason}` });
+    // Статус-коды — best-effort ориентир для сторонних клиентов этого
+    // API, но НЕ единственный источник истины для нашего же фронтенда:
+    // App.jsx читает reason из тела ответа напрямую (см. там) — так
+    // надёжнее, чем полагаться на то, что 503 всегда означает именно
+    // "unavailable", а не "rate_limited" (оба сейчас 503, но это две
+    // разные, отдельно показываемые пользователю причины).
+    const statusByReason = {
+      unavailable: 503,
+      rate_limited: 503,
+      timeout_or_network: 504,
+      bad_response: 502,
+      unparseable: 422,
+    };
+    res.status(statusByReason[result.reason] || 502).json({ error: `ai_search_${result.reason}`, reason: result.reason });
     return;
   }
 

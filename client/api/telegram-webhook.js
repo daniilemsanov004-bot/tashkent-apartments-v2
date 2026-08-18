@@ -541,10 +541,20 @@ async function handleAiSearch(chatId, userId, queryText) {
   const parsed = await parseSearchQuery(queryText);
 
   if (!parsed.ok) {
+    // unparseable — единственный случай, где дело реально может быть
+    // в формулировке запроса. Всё остальное (rate_limited/bad_response/
+    // timeout_or_network) — проблема на стороне сервиса, а не текста
+    // пользователя; "переформулируйте" в этих случаях враньё — человек
+    // будет пробовать другие слова, получать ту же ошибку и решит, что
+    // сломан поиск вообще, а не то, что Gemini временно перегружен
+    // (см. RETRYABLE_STATUSES в _aiSearch.js — retry там уже встроен,
+    // если сообщение всё равно долетело сюда — значит и повтор не спас).
     const text =
       parsed.reason === 'unavailable'
         ? '⚠️ ИИ-поиск не настроен (нет GEMINI_API_KEY на сервере).'
-        : '🤔 Не получилось распознать запрос — попробуйте переформулировать.';
+        : parsed.reason === 'unparseable'
+          ? '🤔 Не получилось распознать запрос — попробуйте переформулировать.'
+          : '⏳ ИИ-поиск сейчас перегружен или недоступен — попробуйте через минуту.';
     if (thinkingMessageId) await editMessageText(chatId, thinkingMessageId, text);
     else await sendMessage(chatId, text);
     return;

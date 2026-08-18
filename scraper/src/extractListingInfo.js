@@ -38,6 +38,15 @@ const LLM_API_KEY = process.env.LLM_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL;
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 15000;
 
+// Статусы, на которых имеет смысл повторить запрос — временная
+// перегрузка/лимит на стороне Gemini (503 "high demand", 429 и т.п.),
+// а не наша ошибка (тот же список, что и в client/api/_aiSearch.js —
+// не выносил в общий модуль: scraper/ и client/ разные деплоймент-
+// юниты, та же конвенция дублирования, что и у похожей логики в
+// других местах проекта).
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAY_MS = 800;
+
 const SYSTEM_PROMPT = `Ты извлекаешь структурированные данные из текста объявления о недвижимости в Ташкенте.
 
 Отвечай СТРОГО валидным JSON без markdown-разметки и без пояснений, вот таким объектом:
@@ -106,8 +115,8 @@ export async function extractListingInfo(rawText) {
 
   // СПОСОБ 1 — Gemini напрямую, приоритетный вариант.
   if (GEMINI_API_KEY) {
-    try {
-      const response = await axios.post(
+    const requestOnce = () =>
+      axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
         {
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -121,6 +130,35 @@ export async function extractListingInfo(rawText) {
         }
       );
 
+    // До 2 попыток — вторая только после короткой паузы и только если
+    // первая упала именно по временной причине (см. RETRYABLE_STATUSES).
+    // Axios при ошибочном статусе бросает исключение (не возвращает
+    // response как fetch), так что статус смотрим через err.response.status.
+    let response;
+    let lastErr;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        response = await requestOnce();
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const status = err.response?.status;
+        const isRetryable = !status || RETRYABLE_STATUSES.has(status); // нет status = сетевая ошибка/таймаут, тоже стоит повторить
+        if (attempt === 2 || !isRetryable) break;
+        console.warn(
+          `extractListingInfo: попытка 1 не удалась (${status ? `статус ${status}` : err.message}), похоже на временную перегрузку — повтор через ${RETRY_DELAY_MS}мс`
+        );
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      }
+    }
+
+    if (lastErr) {
+      console.warn(`extractListingInfo: ошибка Gemini (после возможного повтора: ${lastErr.message}), откат на regex`);
+      return regexFallback();
+    }
+
+    try {
       const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!text) {
         console.warn('extractListingInfo: пустой ответ от Gemini, откат на regex');
@@ -128,7 +166,7 @@ export async function extractListingInfo(rawText) {
       }
       return { ...parseModelJson(text), source: 'llm_gemini' };
     } catch (err) {
-      console.warn(`extractListingInfo: ошибка Gemini (${err.message}), откат на regex`);
+      console.warn(`extractListingInfo: ошибка разбора ответа Gemini (${err.message}), откат на regex`);
       return regexFallback();
     }
   }

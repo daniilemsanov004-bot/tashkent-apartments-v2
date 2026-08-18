@@ -59,18 +59,26 @@ ${DISTRICTS.map((d) => `"${d}"`).join(', ')}
  * @returns {Promise<
  *   {ok:true, filters:{district:string[], deal:('sale'|'rent'|null), type:('apartment'|'house'|'commercial'|null),
  *     priceMin:number|null, priceMax:number|null, currency:('USD'|'UZS'|null), badge:('owner'|null), q:string|null}}
- *   | {ok:false, reason:('unavailable'|'timeout_or_network'|'bad_response'|'unparseable')}
+ *   | {ok:false, reason:('unavailable'|'rate_limited'|'timeout_or_network'|'bad_response'|'unparseable')}
  * >}
  */
+// Статусы, на которых имеет смысл повторить запрос — это ВСЕГДА
+// временные проблемы на стороне Gemini (перегрузка бесплатного тира —
+// 503 "high demand", 429 rate limit, изредка 500/502/504), а не наша
+// ошибка. НЕ включает 400 (мы сами что-то не так собрали в запросе)
+// и 403/404 (неверный ключ / неверное имя модели) — эти повторять
+// бессмысленно, результат будет тем же самым мгновенно.
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAY_MS = 800;
+
 export async function parseSearchQuery(text) {
   if (!GEMINI_API_KEY) {
     return { ok: false, reason: 'unavailable' };
   }
 
   const startedAt = Date.now();
-  let geminiRes;
-  try {
-    geminiRes = await fetch(
+  const requestOnce = () =>
+    fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
@@ -94,8 +102,41 @@ export async function parseSearchQuery(text) {
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       }
     );
-  } catch (err) {
-    console.warn(`_aiSearch: ошибка сети/таймаут через ${Date.now() - startedAt}мс (${err.message})`);
+
+  // До 2 попыток — только вторая попытка после КОРОТКОЙ паузы, и
+  // только если первая упала по сетевой/временной причине (см.
+  // RETRYABLE_STATUSES). Один повтор ощутимо повышает надёжность
+  // бесплатного тира Gemini (503 "high demand" часто проходит уже
+  // через секунду) ценой не более ~1с задержки в обычном случае.
+  // ВАЖНО: LLM_TIMEOUT_MS × 2 + RETRY_DELAY_MS — это верхняя граница
+  // времени ответа при худшем сценарии (обе попытки таймаутят). Если
+  // ставите LLM_TIMEOUT_MS больше ~20-25с, проверьте, что это всё ещё
+  // укладывается в лимит времени выполнения вашей serverless-функции
+  // (Vercel) — иначе пользователь получит 504 от самого Vercel раньше,
+  // чем мы успеем сделать вторую попытку.
+  let geminiRes = null;
+  let networkErr = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    networkErr = null;
+    try {
+      geminiRes = await requestOnce();
+    } catch (err) {
+      networkErr = err;
+      geminiRes = null;
+    }
+
+    const shouldRetry =
+      attempt === 1 && (networkErr || (geminiRes && RETRYABLE_STATUSES.has(geminiRes.status)));
+    if (!shouldRetry) break;
+
+    console.warn(
+      `_aiSearch: попытка 1 не удалась (${networkErr ? networkErr.message : `статус ${geminiRes.status}`}), похоже на временную перегрузку — повтор через ${RETRY_DELAY_MS}мс`
+    );
+    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+  }
+
+  if (networkErr) {
+    console.warn(`_aiSearch: ошибка сети/таймаут (после повтора) через ${Date.now() - startedAt}мс (${networkErr.message})`);
     return { ok: false, reason: 'timeout_or_network' };
   }
 
@@ -106,8 +147,16 @@ export async function parseSearchQuery(text) {
     // ключ и т.п. выглядят как одна и та же ошибка снаружи, но текст
     // сильно разный).
     const errBody = await geminiRes.text().catch(() => '');
-    console.warn(`_aiSearch: Gemini ответил ${geminiRes.status}: ${errBody.slice(0, 500)}`);
-    return { ok: false, reason: 'bad_response' };
+    console.warn(`_aiSearch: Gemini ответил ${geminiRes.status} (после возможного повтора): ${errBody.slice(0, 500)}`);
+    // rate_limited — временная перегрузка/лимит, retryable-статус не
+    // прошёл даже после повтора (см. RETRYABLE_STATUSES выше). Отдаём
+    // её ОТДЕЛЬНО от bad_response (400/403/404 и т.п. — это уже не
+    // "сайт перегружен", а реальная проблема конфигурации на нашей
+    // стороне, её повтором не полечишь) — чтобы пользователю не врать
+    // "попробуйте переформулировать", когда дело вообще не в тексте
+    // его запроса (см. handleAiSearch в telegram-webhook.js и
+    // runAiSearch в App.jsx — оба теперь читают именно эту причину).
+    return { ok: false, reason: RETRYABLE_STATUSES.has(geminiRes.status) ? 'rate_limited' : 'bad_response' };
   }
 
   const data = await geminiRes.json();

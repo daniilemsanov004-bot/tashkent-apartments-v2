@@ -536,6 +536,14 @@ function Dashboard() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
 
+  // ИИ-поиск (client/api/ai-search.js) — отдельное состояние, НЕ трогает
+  // обычный searchInput. Эндпоинт только переводит текст в те же фильтры,
+  // что ниже (districtFilter/dealFilter/...) — сам поиск как и раньше
+  // делает listings.js через buildListingsUrl.
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiError, setAiError] = useState('');
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
@@ -574,6 +582,61 @@ function Dashboard() {
     },
     [session]
   );
+
+  // Применяет ответ ai-search.js к уже существующим фильтрам — сам
+  // запрос объявлений (buildListingsUrl/listings.js) ничего об этом
+  // не знает, просто увидит новые значения state на следующий рендер,
+  // как при обычном ручном выборе фильтров.
+  const runAiSearch = useCallback(async () => {
+    const text = aiQuery.trim();
+    if (!text) return;
+
+    setAiSearching(true);
+    setAiError('');
+    try {
+      const res = await authFetch('/api/ai-search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res) return; // authFetch уже сам обработал 401
+
+      if (!res.ok) {
+        setAiError(
+          res.status === 503
+            ? 'ИИ-поиск не настроен (нет GEMINI_API_KEY на сервере)'
+            : 'Не получилось распознать запрос — попробуйте переформулировать'
+        );
+        return;
+      }
+
+      const r = await res.json();
+
+      setDistrictFilter(r.district || []);
+      setDealFilter(r.deal || 'all');
+      setTypeFilter(r.type || 'all');
+      setBadgeFilter(r.badge || 'all');
+      setPriceCurrency(r.currency || 'all');
+
+      // Ставим сразу и *Input, и дебounced-версию — иначе пришлось бы
+      // ждать DEBOUNCE_MS, пока сработает эффект синхронизации выше,
+      // а результат ИИ-поиска должен применяться сразу.
+      const priceMinStr = r.priceMin != null ? String(r.priceMin) : '';
+      const priceMaxStr = r.priceMax != null ? String(r.priceMax) : '';
+      setPriceMinInput(priceMinStr);
+      setPriceMaxInput(priceMaxStr);
+      setPriceMin(priceMinStr);
+      setPriceMax(priceMaxStr);
+
+      const qStr = r.q || '';
+      setSearchInput(qStr);
+      setSearch(qStr);
+    } catch (err) {
+      setAiError('Не получилось связаться с сервером — попробуйте ещё раз');
+    } finally {
+      setAiSearching(false);
+    }
+  }, [aiQuery, authFetch]);
 
   const buildListingsUrl = useCallback((pageToLoad) => {
     const params = new URLSearchParams({
@@ -870,6 +933,21 @@ function Dashboard() {
           >
             <div className="num">{stats.deals}</div><div className="label">🔥 Ниже рынка</div>
           </div>
+        </div>
+
+        <div className="toolbar ai-search-bar">
+          <input
+            type="text"
+            placeholder="Спросить своими словами: «3-комнатная в Юнусабаде до 80000$, только от собственника»"
+            value={aiQuery}
+            onChange={(e) => setAiQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runAiSearch(); }}
+            disabled={aiSearching}
+          />
+          <button type="button" className="btn" onClick={runAiSearch} disabled={aiSearching || !aiQuery.trim()}>
+            {aiSearching ? 'Ищу…' : '🔎 ИИ-поиск'}
+          </button>
+          {aiError && <span className="ai-search-error">{aiError}</span>}
         </div>
 
         <div className="toolbar">

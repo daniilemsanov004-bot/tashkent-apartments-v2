@@ -83,14 +83,25 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ parts: [{ text: text.slice(0, 500) }] }],
-          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+          // temperature/top_p/top_k официально задепрекейчены для
+          // gemini-3.6-flash/3.7-flash (см. миграционную памятку Google,
+          // обновлена 13.08.2026) — раньше тут был temperature:0, но раз
+          // модель его больше не поддерживает, убрал совсем, вместо того
+          // чтобы гадать, ломает это запрос целиком или тихо игнорируется.
+          generationConfig: { responseMimeType: 'application/json' },
         }),
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       }
     );
 
     if (!geminiRes.ok) {
-      console.warn(`ai-search: Gemini ответил ${geminiRes.status}`);
+      // Печатаем ПОЛНОЕ тело ответа Gemini, а не только статус — иначе
+      // в логах Vercel не видно, ЧТО именно не понравилось API
+      // (неверный формат параметров, лимит бесплатного тира, неверный
+      // ключ и т.п. выглядят как одна и та же 502-ошибка для
+      // пользователя на сайте, но текст сильно разный).
+      const errBody = await geminiRes.text().catch(() => '');
+      console.warn(`ai-search: Gemini ответил ${geminiRes.status}: ${errBody.slice(0, 500)}`);
       res.status(502).json({ error: 'ai_search_failed' });
       return;
     }
@@ -98,12 +109,24 @@ export default async function handler(req, res) {
     const data = await geminiRes.json();
     const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!raw) {
+      console.warn('ai-search: пустой ответ от Gemini, полный data:', JSON.stringify(data).slice(0, 500));
       res.status(502).json({ error: 'empty_ai_response' });
       return;
     }
 
     const cleaned = raw.replace(/^```json\s*|```$/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      // Отдельный catch именно на JSON.parse — чтобы в логе было видно,
+      // что запрос к Gemini прошёл успешно, но сам текст ответа не JSON
+      // (например, модель всё-таки что-то дописала словами вокруг) —
+      // это другая причина сбоя, чем ошибка сети/лимита выше.
+      console.warn(`ai-search: ответ Gemini не распарсился как JSON: ${cleaned.slice(0, 300)}`);
+      res.status(502).json({ error: 'unparseable_ai_response' });
+      return;
+    }
 
     // Валидация ПОСЛЕ модели — не доверяем ей вслепую, даже с
     // responseMimeType: 'application/json'. Район ещё раз сверяем со

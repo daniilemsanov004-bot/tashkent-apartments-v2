@@ -13,7 +13,7 @@ import { DISTRICTS } from '../src/districts.js';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 15000;
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 25000;
 
 // Список районов передаём в промпт как закрытый enum — модель обязана
 // вернуть район ТОЛЬКО из этого списка или null. Это и есть главная
@@ -88,7 +88,19 @@ export default async function handler(req, res) {
           // обновлена 13.08.2026) — раньше тут был temperature:0, но раз
           // модель его больше не поддерживает, убрал совсем, вместо того
           // чтобы гадать, ломает это запрос целиком или тихо игнорируется.
-          generationConfig: { responseMimeType: 'application/json' },
+          //
+          // thinkingConfig.thinkingLevel: "low" — по умолчанию у этих
+          // моделей medium (модель "размышляет" перед ответом), что для
+          // задачи "разложить короткую фразу по 8 полям" явно избыточно
+          // и добавляет секунды задержки без пользы для качества. low
+          // снижает время ответа для latency-критичных задач именно
+          // такого рода (см. документацию Gemini 3.7 Flash) — это и
+          // была вероятная причина таймаута, а не сеть/лимиты сами по
+          // себе.
+          generationConfig: {
+            responseMimeType: 'application/json',
+            thinkingConfig: { thinkingLevel: 'low' },
+          },
         }),
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       }

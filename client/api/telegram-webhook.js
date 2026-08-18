@@ -33,6 +33,7 @@ import { DISTRICTS, districtSlug, districtFromSlug } from './_districts.js';
 import { parsePriceRange } from './_priceParser.js';
 import { buildListingText, buildListingButtons } from './_listingMessage.js';
 import { cleanAgentMessagesBatch } from './_cleanAgents.js';
+import { parseSearchQuery } from './_aiSearch.js';
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const EXCHANGE_RATE_USD_UZS = Number(process.env.EXCHANGE_RATE_USD_UZS) || 11990;
@@ -513,6 +514,81 @@ async function handlePriceTextReply(message) {
   return true;
 }
 
+// ---------- /search (ИИ-поиск свободным текстом) ----------
+//
+// Независим от мастера /find (тот сейчас выключен, см.
+// FIND_WIZARD_ENABLED ниже) — не требует пошагового выбора кнопками,
+// сразу разбирает всю фразу через ту же логику, что и на сайте (см.
+// api/ai-search.js и общий модуль api/_aiSearch.js), и показывает
+// результат тем же renderResultsPage/resultsKeyboard, что уже
+// использует runSearch — то есть кнопки "ещё"/пагинация работают
+// одинаково, откуда бы ни пришёл список результатов.
+
+// Та же эвристика валюты по умолчанию, что и в _priceParser.js
+// (detectCurrency, не экспортирована оттуда) — используется, только
+// если ИИ распознал сумму, но НЕ распознал валюту явно (в тексте не
+// было ни "$"/"баксов", ни "сум"): небольшие числа обычно означают
+// доллары, крупные — сумы. Если модель вообще не увидела валюту явно,
+// разумный дефолт лучше, чем показать диапазон без единиц измерения.
+function guessCurrency(sampleValue) {
+  return sampleValue !== null && sampleValue !== undefined && sampleValue < 100000 ? 'USD' : 'UZS';
+}
+
+async function handleAiSearch(chatId, userId, queryText) {
+  const thinkingRes = await sendMessage(chatId, '🔎 Ищу…');
+  const thinkingMessageId = thinkingRes?.result?.message_id;
+
+  const parsed = await parseSearchQuery(queryText);
+
+  if (!parsed.ok) {
+    const text =
+      parsed.reason === 'unavailable'
+        ? '⚠️ ИИ-поиск не настроен (нет GEMINI_API_KEY на сервере).'
+        : '🤔 Не получилось распознать запрос — попробуйте переформулировать.';
+    if (thinkingMessageId) await editMessageText(chatId, thinkingMessageId, text);
+    else await sendMessage(chatId, text);
+    return;
+  }
+
+  const f = parsed.filters;
+
+  // Тот же формат filters, что понимает уже существующий runSearch
+  // (см. выше) — используемый и мастером /find, когда он включён.
+  let priceRange = null;
+  if (f.priceMin != null || f.priceMax != null) {
+    priceRange = {
+      min: f.priceMin,
+      max: f.priceMax,
+      currency: f.currency || guessCurrency(f.priceMax ?? f.priceMin),
+    };
+  }
+
+  const filters = {
+    dealType: f.deal || null,
+    propertyType: f.type || 'any',
+    districts: f.district || [],
+    rooms: 'any', // ИИ-поиск пока не извлекает комнатность отдельным полем — она остаётся в f.q для текстового поиска ниже
+    priceRange,
+  };
+
+  let results = await runSearch(filters);
+
+  // f.q — то, что ИИ не смог разложить по полям (например конкретный
+  // ЖК, "3-комнатная", пожелание по ремонту) — фильтруем ДОПОЛНИТЕЛЬНО
+  // текстовым совпадением по заголовку, как и обычный поиск на сайте.
+  if (f.q) {
+    const needle = f.q.toLowerCase();
+    results = results.filter((l) => (l.title || '').toLowerCase().includes(needle));
+  }
+
+  const state = { filters, results, offset: 0 };
+
+  if (thinkingMessageId) {
+    await renderResultsPage(chatId, thinkingMessageId, state);
+    await saveSession(chatId, userId, { step: 'results', menuMessageId: thinkingMessageId, ...state });
+  }
+}
+
 // Мастер поиска /find отключён (07.08.2026) — теперь объявления сами
 // разлетаются по тематическим супергруппам/темам (см.
 // notifyToTopicGroup в scraper/src/telegram.js), поэтому отдельный
@@ -526,6 +602,17 @@ function commandName(message) {
   const entity = (message.entities || []).find((e) => e.type === 'bot_command' && e.offset === 0);
   if (!entity) return null;
   return message.text.slice(0, entity.length).split('@')[0]; // срезаем @имя_бота, если есть
+}
+
+// Текст ПОСЛЕ команды — режем по entity.length (полная длина команды,
+// включая "@ИмяБота", если Telegram его дописал), а НЕ по длине cmd из
+// commandName() выше (та уже укорочена split('@')[0] и будет короче,
+// если бота вызвали как "/search@ИмяБота текст" — тогда обрезка по
+// cmd.length оставила бы в начале результата хвост "@ИмяБота").
+function commandArgs(message) {
+  const entity = (message.entities || []).find((e) => e.type === 'bot_command' && e.offset === 0);
+  if (!entity) return '';
+  return message.text.slice(entity.length).trim();
 }
 
 async function handleClean(chatId) {
@@ -552,11 +639,24 @@ async function handleMessage(message) {
     await handleClean(message.chat.id);
     return;
   }
+  if (cmd === '/search' || cmd === '/найти') {
+    const queryText = commandArgs(message);
+    if (!queryText) {
+      await sendMessage(
+        message.chat.id,
+        'Напишите после команды, что ищете, например:\n<code>/search 3-комнатная в Юнусабаде до 80000$, только от собственника</code>'
+      );
+      return;
+    }
+    await handleAiSearch(message.chat.id, message.from.id, queryText);
+    return;
+  }
   if (cmd === '/start' || cmd === '/find') {
     if (!FIND_WIZARD_ENABLED) {
       await sendMessage(
         message.chat.id,
-        'Поиск через бота сейчас не нужен — объявления сами приходят в свою тему группы по типу и району.'
+        'Поиск через кнопки сейчас выключен — объявления сами приходят в свою тему группы по типу и району.\n\n' +
+          'Но можно спросить своими словами: <code>/search 3-комнатная в Юнусабаде до 80000$</code>'
       );
       return;
     }

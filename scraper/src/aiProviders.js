@@ -3,7 +3,6 @@ import axios from 'axios';
 const AI_FALLBACK_ENABLED = process.env.AI_FALLBACK_ENABLED === 'true';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
 
@@ -13,10 +12,17 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 // падают с 404 model_decommissioned. Актуальная замена по
 // рекомендации Groq — openai/gpt-oss-120b.
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
-const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
+// Cerebras убран из цепочки (19.08.2026) — их бесплатный тариф стал
+// разовым $5-кредитом вместо постоянного free tier, на аккаунте
+// проекта исчерпан (стабильные 402 Payment Required), без привязки
+// карты не восстановится. Раз не работает и чинить нечем — выпилен
+// целиком, а не оставлен как мёртвое звено, которое сначала падает на
+// каждом объявлении и только потом идёт дальше по цепочке (даже с
+// circuit breaker'ом это лишние 3 неудачных запроса в начале КАЖДОГО
+// прогона, пока breaker снова не сработает).
 // openai/gpt-4o-mini — платная модель, на аккаунте без пополнения
-// упадёт с 402 (Payment Required), как это уже было с Cerebras.
-// openrouter/free — встроенный авто-роутер OpenRouter: сам подбирает
+// упадёт с 402 (Payment Required). openrouter/free — встроенный
+// авто-роутер OpenRouter: сам подбирает
 // бесплатную модель из текущего живого списка (список :free-моделей
 // у OpenRouter регулярно меняется, поэтому жёстко прибивать
 // конкретный id вроде "meta-llama/llama-3.3-70b:free" рискованно —
@@ -153,7 +159,6 @@ export function providerPlan() {
   const plan = [];
   if (GEMINI_API_KEY && !providerDisabledForRun.has('gemini')) plan.push({ name: 'gemini', enabled: true });
   if (AI_FALLBACK_ENABLED && GROQ_API_KEY && !providerDisabledForRun.has('groq')) plan.push({ name: 'groq', enabled: true });
-  if (AI_FALLBACK_ENABLED && CEREBRAS_API_KEY && !providerDisabledForRun.has('cerebras')) plan.push({ name: 'cerebras', enabled: true });
   if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY && !providerDisabledForRun.has('openrouter')) plan.push({ name: 'openrouter', enabled: true });
   if (AI_FALLBACK_ENABLED && MISTRAL_API_KEY && !providerDisabledForRun.has('mistral')) plan.push({ name: 'mistral', enabled: true });
   return plan;
@@ -201,16 +206,6 @@ export async function runAiJsonChain({
           // приходит пустым — именно это давало "empty response".
           extraBody: /gpt-oss/.test(GROQ_MODEL) ? { reasoning_effort: 'low' } : {},
         });
-      } else if (provider.name === 'cerebras') {
-        data = await callOpenAICompatible({
-          baseUrl: 'https://api.cerebras.ai/v1',
-          apiKey: CEREBRAS_API_KEY,
-          model: CEREBRAS_MODEL,
-          systemPrompt,
-          userText,
-          timeoutMs,
-          maxTokens,
-        });
       } else if (provider.name === 'openrouter') {
         data = await callOpenAICompatible({
           baseUrl: 'https://openrouter.ai/api/v1',
@@ -245,8 +240,8 @@ export async function runAiJsonChain({
         continue;
       }
       // Раньше успех вообще ничего не логировал — в логах было видно
-      // только падения, из-за чего казалось, что groq/cerebras/
-      // openrouter/mistral не пробуются вообще, хотя на деле они
+      // только падения, из-за чего казалось, что groq/openrouter/
+      // mistral не пробуются вообще, хотя на деле они
       // отвечали с первого раза и просто молчали. Теперь видно, кто
       // именно ответил на каждое объявление.
       console.log(`${taskName}: provider ${provider.name} ok`);

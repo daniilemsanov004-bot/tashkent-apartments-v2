@@ -53,15 +53,19 @@ jobs:
           USE_AI_CLASSIFICATION: ${{ secrets.USE_AI_CLASSIFICATION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Без этого флага providerPlan() в aiProviders.js добавляет в
-          # цепочку ТОЛЬКО gemini — остальные ключи ниже (groq/cerebras/
-          # openrouter) просто игнорируются, даже если они заведены в
+          # цепочку ТОЛЬКО gemini — остальные ключи ниже (groq/openrouter/
+          # mistral) просто игнорируются, даже если они заведены в
           # секретах. Именно поэтому таймаут gemini сразу давал
           # "chain exhausted" вместо отката на следующего провайдера.
           AI_FALLBACK_ENABLED: 'true'
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # 19.08.2026: Cerebras убран из цепочки целиком (не только из
+          # кода, но и отсюда) — бесплатный тариф стал разовым
+          # $5-кредитом, на аккаунте проекта исчерпан, стабильные 402.
+          # Пятое звено вместо него — Mistral (см. ниже).
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           # Опционально: http://user:pass@host:port резидентного/мобильного
           # прокси для запросов к OLX (см. src/http.js). Если секрет не

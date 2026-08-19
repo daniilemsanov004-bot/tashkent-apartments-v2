@@ -591,13 +591,13 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     const { belowMarket, belowMarketPct, sampleSize } = marketStatsMap
       ? evaluateDeal(marketStatsMap, {
-        propertyType,
-        dealType,
-        district,
-        currency: priceCurrency,
-        pricePerSqm,
-        marketSegment,
-      })
+          propertyType,
+          dealType,
+          district,
+          currency: priceCurrency,
+          pricePerSqm,
+          marketSegment,
+        })
       : { belowMarket: false, belowMarketPct: null, sampleSize: null };
 
     const sellerNameLooksLikePerson = looksLikePersonName(sellerName);
@@ -633,9 +633,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     const previousPriceUsd =
       previousForSameId?.price_value && previousForSameId?.price_currency
         ? toUsd(
-          { value: previousForSameId.price_value, currency: previousForSameId.price_currency },
-          EXCHANGE_RATE_USD_UZS
-        )
+            { value: previousForSameId.price_value, currency: previousForSameId.price_currency },
+            EXCHANGE_RATE_USD_UZS
+          )
         : null;
     const sameIdPriceChanged =
       isSignificantPriceChange(previousPriceUsd, currentPriceUsd) ||
@@ -670,9 +670,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     const latestEntityUsd =
       latestEntityListing?.price_value && latestEntityListing?.price_currency
         ? toUsd(
-          { value: latestEntityListing.price_value, currency: latestEntityListing.price_currency },
-          EXCHANGE_RATE_USD_UZS
-        )
+            { value: latestEntityListing.price_value, currency: latestEntityListing.price_currency },
+            EXCHANGE_RATE_USD_UZS
+          )
         : null;
     const sameEntityExists = !!latestEntityListing;
     const duplicateByEntity =

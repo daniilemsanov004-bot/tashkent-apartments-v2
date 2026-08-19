@@ -1,5 +1,5 @@
-// Диагностика цепочки AI-провайдеров (Gemini → Groq → Cerebras →
-// OpenRouter), не трогает production-логику — только читает те же
+// Диагностика цепочки AI-провайдеров (Gemini → Groq → OpenRouter →
+// Mistral), не трогает production-логику — только читает те же
 // ENV-переменные, что и aiProviders.js, и показывает, что реально
 // произойдёт при следующем запуске скрейпера.
 //
@@ -32,8 +32,8 @@ function maskedStatus(name, value) {
 console.log('=== ENV-статус провайдеров ===');
 console.log(maskedStatus('GEMINI_API_KEY', process.env.GEMINI_API_KEY));
 console.log(maskedStatus('GROQ_API_KEY', process.env.GROQ_API_KEY));
-console.log(maskedStatus('CEREBRAS_API_KEY', process.env.CEREBRAS_API_KEY));
 console.log(maskedStatus('OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY));
+console.log(maskedStatus('MISTRAL_API_KEY', process.env.MISTRAL_API_KEY));
 console.log(`AI_FALLBACK_ENABLED: ${process.env.AI_FALLBACK_ENABLED === 'true' ? 'да' : 'нет (fallback-провайдеры пропускаются, даже если ключи заданы)'}`);
 
 const plan = providerPlan();

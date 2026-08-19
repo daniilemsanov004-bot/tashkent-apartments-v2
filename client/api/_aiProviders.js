@@ -1,13 +1,44 @@
+// ВАЖНО: это отдельная копия цепочки ИИ-провайдеров от
+// scraper/src/aiProviders.js — используется тут, на Vercel
+// (client/api/_aiSearch.js: ИИ-поиск на сайте и команда /search в
+// Telegram-боте), потому что это другой деплоймент-юнит без общего
+// import-пути со scraper/. Если чините цепочку в одном месте —
+// проверьте и второе (см. также замечание в scraper/src/aiProviders.js).
+//
+// 19.08.2026: синхронизировано с фиксами из scraper/src/aiProviders.js
+// (актуальные модели вместо задепрекейченных/платных, reasoning_effort
+// для reasoning-моделей) — до этого поиск тут тихо ходил по цепочке
+// Gemini -> Groq(404, дохлая модель) -> Cerebras(402) -> OpenRouter(402
+// на платной модели) и почти всегда падал сразу на Gemini без реального
+// фолбэка, хотя AI_FALLBACK_ENABLED был включён.
+//
+// Cerebras убран из цепочки вообще (19.08.2026) — их бесплатный тариф
+// в 2026 стал разовым $5-кредитом вместо постоянного free tier, на
+// аккаунте проекта исчерпан, и без привязки карты не восстановится.
+// Раз он не работает и чинить нечем — просто выпилен, а не оставлен
+// как мёртвое звено, которое на каждый запрос сначала падает с 402 и
+// только потом идёт дальше по цепочке.
+
 const AI_FALLBACK_ENABLED = process.env.AI_FALLBACK_ENABLED === 'true';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+// llama-3.3-70b-versatile официально задепрекейчен Groq 17.06.2026
+// (см. console.groq.com/docs/deprecations) — вызовы к нему падают с
+// 404 model_decommissioned. Актуальная замена — openai/gpt-oss-120b.
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+// openai/gpt-4o-mini — платная модель, на аккаунте без пополнения
+// падает с 402. openrouter/free — авто-роутер, сам подбирает бесплатную
+// модель из текущего живого списка (жёстко прибивать конкретный
+// :free-id рискованно — такие модели периодически снимают с
+// бесплатного тарифа без предупреждения).
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
+// Mistral Experiment tier — 1 млрд токенов/мес бесплатно, постоянный
+// (не разовый) лимит. mistral-small-latest — не reasoning-модель.
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 40000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -86,7 +117,7 @@ async function callGemini({ model, systemPrompt, userText, timeoutMs, maxTokens 
   throw lastError || new Error('gemini failed');
 }
 
-async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userText, timeoutMs, maxTokens = 300, extraHeaders = {} }) {
+async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userText, timeoutMs, maxTokens = 300, extraHeaders = {}, extraBody = {} }) {
   const data = await fetchJson(
     `${baseUrl.replace(/\/$/, '')}/chat/completions`,
     {
@@ -104,6 +135,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, user
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userText },
         ],
+        ...extraBody,
       }),
     },
     timeoutMs
@@ -117,8 +149,8 @@ function providerPlan() {
   const plan = [];
   if (GEMINI_API_KEY) plan.push({ name: 'gemini' });
   if (AI_FALLBACK_ENABLED && GROQ_API_KEY) plan.push({ name: 'groq' });
-  if (AI_FALLBACK_ENABLED && CEREBRAS_API_KEY) plan.push({ name: 'cerebras' });
   if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY) plan.push({ name: 'openrouter' });
+  if (AI_FALLBACK_ENABLED && MISTRAL_API_KEY) plan.push({ name: 'mistral' });
   return plan;
 }
 
@@ -137,62 +169,57 @@ export async function runAiJsonChain({
   let lastError = null;
   for (const provider of plan) {
     try {
+      let data;
       if (provider.name === 'gemini') {
-        return {
-          ok: true,
-          provider: 'gemini',
-          data: await callGemini({ model: GEMINI_MODEL, systemPrompt, userText, timeoutMs, maxTokens }),
-        };
+        data = await callGemini({ model: GEMINI_MODEL, systemPrompt, userText, timeoutMs, maxTokens });
+      } else if (provider.name === 'groq') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.groq.com/openai/v1',
+          apiKey: GROQ_API_KEY,
+          model: GROQ_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+          // openai/gpt-oss-* — reasoning-модели: без этого параметра
+          // они тратят токены на "размышления" до финального ответа и
+          // при небольшом max_tokens content приходит пустым ("empty
+          // response").
+          extraBody: /gpt-oss/.test(GROQ_MODEL) ? { reasoning_effort: 'low' } : {},
+        });
+      } else if (provider.name === 'openrouter') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: OPENROUTER_API_KEY,
+          model: OPENROUTER_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+          extraHeaders: {
+            ...(process.env.OPENROUTER_HTTP_REFERER ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER } : {}),
+            ...(process.env.OPENROUTER_APP_TITLE ? { 'X-Title': process.env.OPENROUTER_APP_TITLE } : {}),
+          },
+          // openrouter/free сам выбирает бесплатную модель, часто тоже
+          // reasoning (DeepSeek/GLM/Qwen-thinking и т.п.) — тот же
+          // "empty response", что и с gpt-oss на Groq.
+          extraBody: { reasoning: { effort: 'low', exclude: true } },
+        });
+      } else if (provider.name === 'mistral') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.mistral.ai/v1',
+          apiKey: MISTRAL_API_KEY,
+          model: MISTRAL_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else {
+        continue;
       }
-      if (provider.name === 'groq') {
-        return {
-          ok: true,
-          provider: 'groq',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://api.groq.com/openai/v1',
-            apiKey: GROQ_API_KEY,
-            model: GROQ_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-          }),
-        };
-      }
-      if (provider.name === 'cerebras') {
-        return {
-          ok: true,
-          provider: 'cerebras',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://api.cerebras.ai/v1',
-            apiKey: CEREBRAS_API_KEY,
-            model: CEREBRAS_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-          }),
-        };
-      }
-      if (provider.name === 'openrouter') {
-        return {
-          ok: true,
-          provider: 'openrouter',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://openrouter.ai/api/v1',
-            apiKey: OPENROUTER_API_KEY,
-            model: OPENROUTER_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-            extraHeaders: {
-              ...(process.env.OPENROUTER_HTTP_REFERER ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER } : {}),
-              ...(process.env.OPENROUTER_APP_TITLE ? { 'X-Title': process.env.OPENROUTER_APP_TITLE } : {}),
-            },
-          }),
-        };
-      }
+      console.log(`${taskName}: provider ${provider.name} ok`);
+      return { ok: true, provider: provider.name, data };
     } catch (err) {
       lastError = err;
       console.warn(`${taskName}: provider ${provider.name} failed (${err?.response?.status || err.message})`);

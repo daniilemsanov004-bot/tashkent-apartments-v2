@@ -7,16 +7,6 @@ on:
   # cron-сервис (cron-job.org) через API, см. README.
   workflow_dispatch: {} # позволяет запустить вручную кнопкой в GitHub, и именно этот же триггер дёргает внешний cron-сервис
 
-# Инцидент 19.08.2026: один прогон завис на источнике, который начал
-# блокировать буквально каждый запрос (см. circuit breaker в
-# run.js), и т.к. concurrency-группы не было, cron-job.org каждые
-# 15 минут запускал ЕЩЁ один прогон поверх зависшего — за пару часов
-# накопилось 9 параллельных зависших прогонов одновременно, и ни один
-# не успевал дойти до отправки объявлений. cancel-in-progress: true —
-# если новый триггер приходит, пока предыдущий прогон ещё не
-# закончился, предыдущий просто отменяется вместо того, чтобы висеть
-# рядом с новым — так система сама лечится за один тик, а не копит
-# зависшие прогоны на весь запас минут GitHub Actions.
 concurrency:
   group: scrape-apartments
   cancel-in-progress: true
@@ -52,6 +42,11 @@ jobs:
           TELEGRAM_GROUP_DEALS: ${{ secrets.TELEGRAM_GROUP_DEALS }}
           USE_AI_CLASSIFICATION: ${{ secrets.USE_AI_CLASSIFICATION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           # Опционально: http://user:pass@host:port резидентного/мобильного
           # прокси для запросов к OLX (см. src/http.js). Если секрет не
           # задан в репозитории — переменная просто пустая, и код работает

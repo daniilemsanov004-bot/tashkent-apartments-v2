@@ -90,7 +90,7 @@ async function callGemini({ model, systemPrompt, userText, timeoutMs, maxTokens 
   throw lastError || new Error('gemini failed');
 }
 
-async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userText, timeoutMs, maxTokens = 300, extraHeaders = {} }) {
+async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userText, timeoutMs, maxTokens = 300, extraHeaders = {}, extraBody = {} }) {
   const response = await axios.post(
     `${baseUrl.replace(/\/$/, '')}/chat/completions`,
     {
@@ -101,6 +101,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, user
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userText },
       ],
+      ...extraBody,
     },
     {
       headers: {
@@ -159,6 +160,12 @@ export async function runAiJsonChain({
             userText,
             timeoutMs,
             maxTokens,
+            // openai/gpt-oss-* — reasoning-модели: без этого параметра
+            // они по умолчанию тратят "medium" количество токенов на
+            // размышления ДО финального ответа, и при небольшом
+            // max_tokens (300 для извлечения полей) итоговый content
+            // приходит пустым — именно это давало "empty response".
+            extraBody: /gpt-oss/.test(GROQ_MODEL) ? { reasoning_effort: 'low' } : {},
           }),
         };
       }
@@ -193,6 +200,12 @@ export async function runAiJsonChain({
               ...(process.env.OPENROUTER_HTTP_REFERER ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER } : {}),
               ...(process.env.OPENROUTER_APP_TITLE ? { 'X-Title': process.env.OPENROUTER_APP_TITLE } : {}),
             },
+            // openrouter/free сам выбирает бесплатную модель, и часто
+            // это тоже reasoning-модель (DeepSeek/GLM/Qwen-thinking и
+            // т.п.) — тот же "empty response", что и с gpt-oss на Groq.
+            // effort:'low' + exclude:true просит минимум размышлений и
+            // не возвращать их в ответе, оставляя токены под сам JSON.
+            extraBody: { reasoning: { effort: 'low', exclude: true } },
           }),
         };
       }

@@ -85,7 +85,7 @@ export async function extractListingInfo(rawText) {
       systemPrompt: SYSTEM_PROMPT,
       userText: rawText.slice(0, 3000),
       timeoutMs: LLM_TIMEOUT_MS,
-      maxTokens: 300,
+      maxTokens: 700,
     });
 
     if (!result.ok) {

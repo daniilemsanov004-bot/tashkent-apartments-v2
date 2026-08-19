@@ -40,9 +40,16 @@ jobs:
     # Ограничение по времени вместе с cancel-in-progress: false (очередь
     # выше) — если прогон всё-таки зависнет (напр. источник снова начнёт
     # блокировать каждый запрос до срабатывания circuit breaker), он
-    # сам оборвётся через 12 минут вместо того, чтобы висеть часами и
+    # сам оборвётся через 20 минут вместо того, чтобы висеть часами и
     # блокировать всю очередь следующих триггеров cron-job.org.
-    timeout-minutes: 12
+    # 19.08.2026: поднято с 12 до 20 минут — даже с circuit breaker'ом
+    # на эндпоинте телефонов (см. fetchOlxPhone в scrapers/olx.js)
+    # первые PHONE_CIRCUIT_BREAKER_THRESHOLD неудачных попыток всё
+    # равно тратят время на retry+backoff, а обычный прогон и так может
+    # уходить в фоновые задержки (LLM_EXTRACT_DELAY_MS между вызовами
+    # AI-провайдеров) — 12 минут оказалось слишком впритык и обрывало
+    # прогоны, которые были близки к завершению.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: scraper
@@ -76,7 +83,7 @@ jobs:
           # mistral) просто игнорируются, даже если они заведены в
           # секретах. Именно поэтому таймаут gemini сразу давал
           # "chain exhausted" вместо отката на следующего провайдера.
-          AI_FALLBACK_ENABLED: 'true'
+          AI_FALLBACK_ENABLED: "true"
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

@@ -578,7 +578,29 @@ export async function fetchOlxSellerListingsCount(sellerListingsUrl) {
  * из URL объявления вроде "ID4pYww") — берём его из sku в JSON-LD
  * блока на странице объявления, см. parseJsonLd/fetchOlxDetails выше.
  */
+
+// Circuit breaker: инцидент 19.08.2026 — эндпоинт limited-phones начал
+// отдавать 400 буквально на КАЖДОМ объявлении (не единичный сбой, а
+// похоже на изменение самого API/защиты на стороне OLX). getWithRetry
+// не считает 400 "блокировкой" (короткая пауза ~2-4с вместо 15-30с),
+// но при отсутствии верхнего предела попыток это всё равно ~130
+// объявлений × 2 попытки за прогон — и прогон не укладывался в
+// timeout-minutes джобы (см. .github/workflows/scrape.yml), из-за
+// чего GitHub Actions обрывал его на середине.
+// Если подряд не удаётся получить телефон для нескольких объявлений —
+// почти наверняка сбой на стороне эндпоинта для ВСЕГО прогона, а не
+// разовая случайность на конкретном объявлении. В этом случае дальше
+// даже не пытаемся — просто возвращаем null сразу, без похода в сеть.
+// Состояние живёт только в рамках памяти процесса — каждый новый
+// прогон scraper'а (новый процесс Node) начинает со свежим счётчиком,
+// так что как только OLX починит эндпоинт, следующий прогон снова
+// начнёт получать номера как обычно.
+const PHONE_CIRCUIT_BREAKER_THRESHOLD = 5;
+let consecutivePhoneFailures = 0;
+let phoneCircuitTripped = false;
+
 export async function fetchOlxPhone(offerId) {
+  if (phoneCircuitTripped) return null;
   try {
     const { data } = await getWithRetry(
       `https://www.olx.uz/api/v1/offers/${offerId}/limited-phones/`,
@@ -592,9 +614,23 @@ export async function fetchOlxPhone(offerId) {
       2,
       true // useProxy
     );
+    consecutivePhoneFailures = 0;
     return data?.data?.phones?.[0] || null;
   } catch (err) {
     console.warn(`Не удалось получить телефон (offerId=${offerId}):`, err.message);
+    consecutivePhoneFailures++;
+    if (consecutivePhoneFailures >= PHONE_CIRCUIT_BREAKER_THRESHOLD) {
+      phoneCircuitTripped = true;
+      console.warn(
+        `[olx-phone] ${consecutivePhoneFailures} телефонов подряд не удалось получить — похоже, эндпоинт limited-phones сломан/блокирует весь этот прогон. Останавливаю попытки получить телефон до конца прогона (остальные объявления обработаются без номера; дедупликация по телефону просто не сработает для них в этом прогоне).`
+      );
+    }
     return null;
   }
+}
+
+/** Только для тестов — сбрасывает состояние circuit breaker'а телефонов. */
+export function _resetPhoneCircuitBreakerForTests() {
+  consecutivePhoneFailures = 0;
+  phoneCircuitTripped = false;
 }

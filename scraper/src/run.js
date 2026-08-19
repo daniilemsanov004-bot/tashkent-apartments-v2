@@ -24,6 +24,7 @@ import { cleanAgentBacklog } from './cleanAgentMessages.js';
 import { findAgentTextSignal } from './agentSignals.js';
 import { normalizePhone } from './phone.js';
 import { extractListingInfo } from './extractListingInfo.js';
+import { isProviderActiveThisRun } from './aiProviders.js';
 import { findUrgencySignal } from './urgencySignals.js';
 import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
 import { detectMarketSegment } from './marketSegment.js';
@@ -56,6 +57,11 @@ const PHONE_REUSE_AGENT_THRESHOLD = 2;
 // см. обсуждение в чате). 7с даёт ~8-9 запросов/мин с запасом — если
 // лимит Google в будущем изменится, это первое место для правки.
 const LLM_EXTRACT_DELAY_MS = Number(process.env.LLM_EXTRACT_DELAY_MS) || 7000;
+// Как только Gemini отключается circuit breaker'ом на этот прогон
+// (см. aiProviders.js) — длинная пауза больше не нужна, она была
+// нужна только ради его лимита. Groq/OpenRouter не настолько строгие,
+// короткой паузы достаточно, чтобы не долбить их слишком часто.
+const LLM_EXTRACT_DELAY_MS_NO_GEMINI = Number(process.env.LLM_EXTRACT_DELAY_MS_NO_GEMINI) || 1500;
 
 const PHONE_REGEX = /(\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})/;
 const DEAL_SCORE_MIN_MARKET_COMPONENT = Number(process.env.DEAL_SCORE_MIN_MARKET_COMPONENT) || 10;
@@ -519,7 +525,7 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // новые — см. `if (await isKnown(item.id)) continue` в начале
     // цикла).
     const llmInfo = await extractListingInfo(rawText);
-    await sleep(LLM_EXTRACT_DELAY_MS);
+    await sleep(isProviderActiveThisRun('gemini') ? LLM_EXTRACT_DELAY_MS : LLM_EXTRACT_DELAY_MS_NO_GEMINI);
 
     const rooms = classification.rooms ?? llmInfo.rooms;
     const area = classification.area ?? llmInfo.area_living;

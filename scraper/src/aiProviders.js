@@ -5,6 +5,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 // llama-3.3-70b-versatile официально задепрекейчен Groq 17.06.2026
@@ -21,6 +22,12 @@ const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
 // конкретный id вроде "meta-llama/llama-3.3-70b:free" рискованно —
 // такие id периодически снимают с бесплатного тарифа без предупреждения).
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
+// Mistral Experiment tier — 1 млрд токенов/мес бесплатно, самый
+// щедрый постоянный (не разовый) лимит из всех провайдеров в цепочке.
+// mistral-small-latest — не reasoning-модель, поэтому reasoning_effort
+// ей не нужен и "empty response" из-за исчерпанного лимита токенов
+// на размышления ей не грозит.
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
 
@@ -148,7 +155,16 @@ export function providerPlan() {
   if (AI_FALLBACK_ENABLED && GROQ_API_KEY && !providerDisabledForRun.has('groq')) plan.push({ name: 'groq', enabled: true });
   if (AI_FALLBACK_ENABLED && CEREBRAS_API_KEY && !providerDisabledForRun.has('cerebras')) plan.push({ name: 'cerebras', enabled: true });
   if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY && !providerDisabledForRun.has('openrouter')) plan.push({ name: 'openrouter', enabled: true });
+  if (AI_FALLBACK_ENABLED && MISTRAL_API_KEY && !providerDisabledForRun.has('mistral')) plan.push({ name: 'mistral', enabled: true });
   return plan;
+}
+
+// Нужно снаружи (run.js), чтобы решить, нужна ли ещё длинная пауза
+// между объявлениями — она существует только ради лимита Gemini
+// (см. LLM_EXTRACT_DELAY_MS), и как только Gemini отключён circuit
+// breaker'ом на этот прогон, держать её длинной уже незачем.
+export function isProviderActiveThisRun(name) {
+  return !providerDisabledForRun.has(name);
 }
 
 export async function runAiJsonChain({
@@ -166,74 +182,75 @@ export async function runAiJsonChain({
   let lastError = null;
   for (const provider of plan) {
     try {
+      let data;
       if (provider.name === 'gemini') {
-        return {
-          ok: true,
-          provider: 'gemini',
-          data: await callGemini({ model: GEMINI_MODEL, systemPrompt, userText, timeoutMs, maxTokens }),
-        };
+        data = await callGemini({ model: GEMINI_MODEL, systemPrompt, userText, timeoutMs, maxTokens });
+      } else if (provider.name === 'groq') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.groq.com/openai/v1',
+          apiKey: GROQ_API_KEY,
+          model: GROQ_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+          // openai/gpt-oss-* — reasoning-модели: без этого параметра
+          // они по умолчанию тратят "medium" количество токенов на
+          // размышления ДО финального ответа, и при небольшом
+          // max_tokens (300 для извлечения полей) итоговый content
+          // приходит пустым — именно это давало "empty response".
+          extraBody: /gpt-oss/.test(GROQ_MODEL) ? { reasoning_effort: 'low' } : {},
+        });
+      } else if (provider.name === 'cerebras') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.cerebras.ai/v1',
+          apiKey: CEREBRAS_API_KEY,
+          model: CEREBRAS_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else if (provider.name === 'openrouter') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: OPENROUTER_API_KEY,
+          model: OPENROUTER_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+          extraHeaders: {
+            ...(process.env.OPENROUTER_HTTP_REFERER ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER } : {}),
+            ...(process.env.OPENROUTER_APP_TITLE ? { 'X-Title': process.env.OPENROUTER_APP_TITLE } : {}),
+          },
+          // openrouter/free сам выбирает бесплатную модель, и часто
+          // это тоже reasoning-модель (DeepSeek/GLM/Qwen-thinking и
+          // т.п.) — тот же "empty response", что и с gpt-oss на Groq.
+          // effort:'low' + exclude:true просит минимум размышлений и
+          // не возвращать их в ответе, оставляя токены под сам JSON.
+          extraBody: { reasoning: { effort: 'low', exclude: true } },
+        });
+      } else if (provider.name === 'mistral') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.mistral.ai/v1',
+          apiKey: MISTRAL_API_KEY,
+          model: MISTRAL_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else {
+        continue;
       }
-      if (provider.name === 'groq') {
-        return {
-          ok: true,
-          provider: 'groq',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://api.groq.com/openai/v1',
-            apiKey: GROQ_API_KEY,
-            model: GROQ_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-            // openai/gpt-oss-* — reasoning-модели: без этого параметра
-            // они по умолчанию тратят "medium" количество токенов на
-            // размышления ДО финального ответа, и при небольшом
-            // max_tokens (300 для извлечения полей) итоговый content
-            // приходит пустым — именно это давало "empty response".
-            extraBody: /gpt-oss/.test(GROQ_MODEL) ? { reasoning_effort: 'low' } : {},
-          }),
-        };
-      }
-      if (provider.name === 'cerebras') {
-        return {
-          ok: true,
-          provider: 'cerebras',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://api.cerebras.ai/v1',
-            apiKey: CEREBRAS_API_KEY,
-            model: CEREBRAS_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-          }),
-        };
-      }
-      if (provider.name === 'openrouter') {
-        return {
-          ok: true,
-          provider: 'openrouter',
-          data: await callOpenAICompatible({
-            baseUrl: 'https://openrouter.ai/api/v1',
-            apiKey: OPENROUTER_API_KEY,
-            model: OPENROUTER_MODEL,
-            systemPrompt,
-            userText,
-            timeoutMs,
-            maxTokens,
-            extraHeaders: {
-              ...(process.env.OPENROUTER_HTTP_REFERER ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER } : {}),
-              ...(process.env.OPENROUTER_APP_TITLE ? { 'X-Title': process.env.OPENROUTER_APP_TITLE } : {}),
-            },
-            // openrouter/free сам выбирает бесплатную модель, и часто
-            // это тоже reasoning-модель (DeepSeek/GLM/Qwen-thinking и
-            // т.п.) — тот же "empty response", что и с gpt-oss на Groq.
-            // effort:'low' + exclude:true просит минимум размышлений и
-            // не возвращать их в ответе, оставляя токены под сам JSON.
-            extraBody: { reasoning: { effort: 'low', exclude: true } },
-          }),
-        };
-      }
+      // Раньше успех вообще ничего не логировал — в логах было видно
+      // только падения, из-за чего казалось, что groq/cerebras/
+      // openrouter/mistral не пробуются вообще, хотя на деле они
+      // отвечали с первого раза и просто молчали. Теперь видно, кто
+      // именно ответил на каждое объявление.
+      console.log(`${taskName}: provider ${provider.name} ok`);
+      return { ok: true, provider: provider.name, data };
     } catch (err) {
       lastError = err;
       console.warn(`${taskName}: provider ${provider.name} failed (${err.response?.status || err.message})`);

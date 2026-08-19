@@ -740,6 +740,14 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     delete listing.phone_from_api; // служебное поле, в базу не пишем
     delete listing.phone_from_details; // тоже служебное — уже перенесено в phone
     delete listing.raw_district; // тоже служебное — уже перенесено в district/district_raw
+    // 19.08.2026: item.realting_owner_confirmed (см. выше по файлу) —
+    // тоже чисто служебное поле для определения владелец/агент внутри
+    // этого прогона, в схеме Supabase такой колонки нет и не должно
+    // быть. Без этого delete весь upsert падал на КАЖДОМ объявлении с
+    // источника realting: "Could not find the 'realting_owner_confirmed'
+    // column of 'listings' in the schema cache" — то есть ничего с
+    // realting вообще не сохранялось и не уходило в Telegram.
+    delete listing.realting_owner_confirmed;
 
     const saved = await saveListing(listing, existingById);
     if (!saved) {

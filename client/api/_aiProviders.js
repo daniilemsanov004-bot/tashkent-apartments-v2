@@ -53,8 +53,10 @@ const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instr
 // Cloudflare Workers AI free tier — 10 000 нейронов/день, без карты.
 // Требует CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (два значения,
 // не один ключ). Edge-инфраструктура, независимая от остальных
-// провайдеров в цепочке. См. подробности в scraper/src/aiProviders.js.
-const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+// провайдеров в цепочке. -fast вариант (не обычный instruct) —
+// Cloudflare задепрекейчила базовый 30.05.2026, см. подробности в
+// scraper/src/aiProviders.js.
+const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 40000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);

@@ -49,11 +49,12 @@ const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instr
 // Требует ДВА значения, не один ключ: CLOUDFLARE_ACCOUNT_ID (виден в
 // дашборде Cloudflare) и CLOUDFLARE_API_TOKEN. Инфраструктура —
 // edge-сеть Cloudflare, ещё один независимый источник отказа.
-// llama-3.1-8b-instruct взят вместо 3.3-70b намеренно: 8B почти не
-// расходует нейроны/день, а этот провайдер и так самый последний в
-// цепочке (subject to остальные уже упали) — важнее продержаться на
-// нём подольше, чем выжать максимум качества из одного запроса.
-const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+// llama-3.1-8b-instruct-fast (а не обычный llama-3.1-8b-instruct без
+// -fast) — Cloudflare задепрекейчила базовый вариант 30.05.2026 (см.
+// developers.cloudflare.com/changelog/post/2026-05-08-planned-model-deprecations/),
+// вызовы к нему падают с 410 Gone. -fast и -lora варианты остались
+// активными и это официально рекомендованный путь миграции.
+const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
 

@@ -23,7 +23,7 @@ import { parsePrice, toUsd } from './priceParser.js';
 import { cleanAgentBacklog } from './cleanAgentMessages.js';
 import { findAgentTextSignal } from './agentSignals.js';
 import { normalizePhone } from './phone.js';
-import { extractListingInfo } from './extractListingInfo.js';
+import { extractListingInfo, extractListingInfoRegexOnly } from './extractListingInfo.js';
 import { isProviderActiveThisRun } from './aiProviders.js';
 import { findUrgencySignal } from './urgencySignals.js';
 import { refreshMarketStatsIfStale, loadMarketStatsMap, evaluateDeal } from './marketStats.js';
@@ -524,8 +524,21 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     // пачке новых объявлений за один прогон (сюда доходят только
     // новые — см. `if (await isKnown(item.id)) continue` в начале
     // цикла).
-    const llmInfo = await extractListingInfo(rawText);
-    await sleep(isProviderActiveThisRun('gemini') ? LLM_EXTRACT_DELAY_MS : LLM_EXTRACT_DELAY_MS_NO_GEMINI);
+    // Агентские объявления (isConfirmedAgent) НЕ отправляются ни в
+    // Telegram, ни на сайт по умолчанию (см. notifyToTopicGroup ниже и
+    // client/api/listings.js: .neq('label_kind', 'agent')) — им не
+    // нужны area_total/condition/legal_risk, которые даёт только ИИ.
+    // Поэтому не тратим на них вызовы Gemini/Groq/... вообще (ни сам
+    // запрос, ни паузу между вызовами) — сразу regex-only разбор,
+    // площадь/комнаты он всё равно даёт (нужны для entityKey и
+    // price_per_sqm, чтобы не плодить дублей в базе при повторных
+    // прогонах).
+    const llmInfo = isConfirmedAgent
+      ? extractListingInfoRegexOnly(rawText)
+      : await extractListingInfo(rawText);
+    if (!isConfirmedAgent) {
+      await sleep(isProviderActiveThisRun('gemini') ? LLM_EXTRACT_DELAY_MS : LLM_EXTRACT_DELAY_MS_NO_GEMINI);
+    }
 
     const rooms = classification.rooms ?? llmInfo.rooms;
     const area = classification.area ?? llmInfo.area_living;
@@ -578,13 +591,13 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
 
     const { belowMarket, belowMarketPct, sampleSize } = marketStatsMap
       ? evaluateDeal(marketStatsMap, {
-          propertyType,
-          dealType,
-          district,
-          currency: priceCurrency,
-          pricePerSqm,
-          marketSegment,
-        })
+        propertyType,
+        dealType,
+        district,
+        currency: priceCurrency,
+        pricePerSqm,
+        marketSegment,
+      })
       : { belowMarket: false, belowMarketPct: null, sampleSize: null };
 
     const sellerNameLooksLikePerson = looksLikePersonName(sellerName);
@@ -620,9 +633,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     const previousPriceUsd =
       previousForSameId?.price_value && previousForSameId?.price_currency
         ? toUsd(
-            { value: previousForSameId.price_value, currency: previousForSameId.price_currency },
-            EXCHANGE_RATE_USD_UZS
-          )
+          { value: previousForSameId.price_value, currency: previousForSameId.price_currency },
+          EXCHANGE_RATE_USD_UZS
+        )
         : null;
     const sameIdPriceChanged =
       isSignificantPriceChange(previousPriceUsd, currentPriceUsd) ||
@@ -657,9 +670,9 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
     const latestEntityUsd =
       latestEntityListing?.price_value && latestEntityListing?.price_currency
         ? toUsd(
-            { value: latestEntityListing.price_value, currency: latestEntityListing.price_currency },
-            EXCHANGE_RATE_USD_UZS
-          )
+          { value: latestEntityListing.price_value, currency: latestEntityListing.price_currency },
+          EXCHANGE_RATE_USD_UZS
+        )
         : null;
     const sameEntityExists = !!latestEntityListing;
     const duplicateByEntity =

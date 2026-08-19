@@ -41,8 +41,13 @@ const SYSTEM_PROMPT = `Ты извлекаешь структурированн�
  *   rooms:number|null, floor:number|null, floor_total:number|null, condition:string|null,
  *   market_segment:string|null, legal_risk:string|null, partial:boolean, source:'llm'|'regex_fallback'}>}
  */
-export async function extractListingInfo(rawText) {
-  const regexFallback = () => ({
+// Вынесено из extractListingInfo, чтобы можно было явно запросить
+// ТОЛЬКО regex-разбор, без похода к ИИ вообще (см. extractListingInfoRegexOnly
+// ниже — используется в run.js для уже подтверждённых агентских
+// объявлений, которым все равно не нужны area_total/condition/legal_risk,
+// раз они не попадают ни в Telegram, ни на сайт по умолчанию).
+function regexFallbackResult(rawText) {
+  return {
     area_living: parseArea(rawText),
     area_total: null,
     area_land_sotka: null,
@@ -54,7 +59,22 @@ export async function extractListingInfo(rawText) {
     legal_risk: null,
     partial: true,
     source: 'regex_fallback',
-  });
+  };
+}
+
+/**
+ * Быстрый regex-only разбор без единого обращения к ИИ-провайдерам.
+ * Специально для случаев, когда объявление уже точно не пойдёт ни в
+ * Telegram, ни на сайт (isConfirmedAgent в run.js) — незачем тратить на
+ * него лимиты Gemini/Groq/... и время на паузу между вызовами.
+ * @param {string|null|undefined} rawText
+ */
+export function extractListingInfoRegexOnly(rawText) {
+  return regexFallbackResult(rawText);
+}
+
+export async function extractListingInfo(rawText) {
+  const regexFallback = () => regexFallbackResult(rawText);
 
   if (!rawText) {
     return regexFallback();

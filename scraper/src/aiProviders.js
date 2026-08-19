@@ -7,7 +7,11 @@ const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+// llama-3.3-70b-versatile официально задепрекейчен Groq 17.06.2026
+// (см. console.groq.com/docs/deprecations) — вызовы к нему теперь
+// падают с 404 model_decommissioned. Актуальная замена по
+// рекомендации Groq — openai/gpt-oss-120b.
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 

@@ -13,7 +13,14 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 // рекомендации Groq — openai/gpt-oss-120b.
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+// openai/gpt-4o-mini — платная модель, на аккаунте без пополнения
+// упадёт с 402 (Payment Required), как это уже было с Cerebras.
+// openrouter/free — встроенный авто-роутер OpenRouter: сам подбирает
+// бесплатную модель из текущего живого списка (список :free-моделей
+// у OpenRouter регулярно меняется, поэтому жёстко прибивать
+// конкретный id вроде "meta-llama/llama-3.3-70b:free" рискованно —
+// такие id периодически снимают с бесплатного тарифа без предупреждения).
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);

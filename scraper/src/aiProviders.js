@@ -5,6 +5,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
+const SAMBANOVA_API_KEY = process.env.SAMBANOVA_API_KEY;
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 // llama-3.3-70b-versatile официально задепрекейчен Groq 17.06.2026
@@ -34,6 +37,23 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 // ей не нужен и "empty response" из-за исчерпанного лимита токенов
 // на размышления ей не грозит.
 const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+// SambaNova Cloud free developer tier — без карты, 600 RPM.
+// Llama-3.3-70B-Instruct — не reasoning-модель (в отличие от их же
+// gpt-oss на этом провайдере), так что reasoning_effort ей не нужен и
+// пустых ответов из-за токенов на размышления можно не бояться.
+// Независимая от остальных провайдеров инфраструктура — свои чипы
+// (RDU), не переиспользует чужие GPU-облака, как многие агрегаторы.
+const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct';
+// Cloudflare Workers AI free tier — 10 000 "нейронов"/день (это
+// порядка 1000+ ответов в день для 8B-модели), без привязки карты.
+// Требует ДВА значения, не один ключ: CLOUDFLARE_ACCOUNT_ID (виден в
+// дашборде Cloudflare) и CLOUDFLARE_API_TOKEN. Инфраструктура —
+// edge-сеть Cloudflare, ещё один независимый источник отказа.
+// llama-3.1-8b-instruct взят вместо 3.3-70b намеренно: 8B почти не
+// расходует нейроны/день, а этот провайдер и так самый последний в
+// цепочке (subject to остальные уже упали) — важнее продержаться на
+// нём подольше, чем выжать максимум качества из одного запроса.
+const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
 
@@ -161,6 +181,8 @@ export function providerPlan() {
   if (AI_FALLBACK_ENABLED && GROQ_API_KEY && !providerDisabledForRun.has('groq')) plan.push({ name: 'groq', enabled: true });
   if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY && !providerDisabledForRun.has('openrouter')) plan.push({ name: 'openrouter', enabled: true });
   if (AI_FALLBACK_ENABLED && MISTRAL_API_KEY && !providerDisabledForRun.has('mistral')) plan.push({ name: 'mistral', enabled: true });
+  if (AI_FALLBACK_ENABLED && SAMBANOVA_API_KEY && !providerDisabledForRun.has('sambanova')) plan.push({ name: 'sambanova', enabled: true });
+  if (AI_FALLBACK_ENABLED && CLOUDFLARE_ACCOUNT_ID && CLOUDFLARE_API_TOKEN && !providerDisabledForRun.has('cloudflare')) plan.push({ name: 'cloudflare', enabled: true });
   return plan;
 }
 
@@ -231,6 +253,26 @@ export async function runAiJsonChain({
           baseUrl: 'https://api.mistral.ai/v1',
           apiKey: MISTRAL_API_KEY,
           model: MISTRAL_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else if (provider.name === 'sambanova') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.sambanova.ai/v1',
+          apiKey: SAMBANOVA_API_KEY,
+          model: SAMBANOVA_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else if (provider.name === 'cloudflare') {
+        data = await callOpenAICompatible({
+          baseUrl: `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1`,
+          apiKey: CLOUDFLARE_API_TOKEN,
+          model: CLOUDFLARE_MODEL,
           systemPrompt,
           userText,
           timeoutMs,

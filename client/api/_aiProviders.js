@@ -18,12 +18,20 @@
 // Раз он не работает и чинить нечем — просто выпилен, а не оставлен
 // как мёртвое звено, которое на каждый запрос сначала падает с 402 и
 // только потом идёт дальше по цепочке.
+//
+// 19.08.2026: добавлены SambaNova и Cloudflare Workers AI пятым и
+// шестым звеном (после Mistral) — при 4 провайдерах шанс, что упадут
+// все одновременно, был ощутимо больше 10%; независимые от остальных
+// провайдеров (свои чипы/edge-сеть) снижают этот риск.
 
 const AI_FALLBACK_ENABLED = process.env.AI_FALLBACK_ENABLED === 'true';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
+const SAMBANOVA_API_KEY = process.env.SAMBANOVA_API_KEY;
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 // llama-3.3-70b-versatile официально задепрекейчен Groq 17.06.2026
@@ -39,6 +47,14 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 // Mistral Experiment tier — 1 млрд токенов/мес бесплатно, постоянный
 // (не разовый) лимит. mistral-small-latest — не reasoning-модель.
 const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+// SambaNova Cloud free tier — без карты, независимые чипы (RDU), не
+// reasoning-модель. См. подробное обоснование в scraper/src/aiProviders.js.
+const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct';
+// Cloudflare Workers AI free tier — 10 000 нейронов/день, без карты.
+// Требует CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (два значения,
+// не один ключ). Edge-инфраструктура, независимая от остальных
+// провайдеров в цепочке. См. подробности в scraper/src/aiProviders.js.
+const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 40000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -151,6 +167,8 @@ function providerPlan() {
   if (AI_FALLBACK_ENABLED && GROQ_API_KEY) plan.push({ name: 'groq' });
   if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY) plan.push({ name: 'openrouter' });
   if (AI_FALLBACK_ENABLED && MISTRAL_API_KEY) plan.push({ name: 'mistral' });
+  if (AI_FALLBACK_ENABLED && SAMBANOVA_API_KEY) plan.push({ name: 'sambanova' });
+  if (AI_FALLBACK_ENABLED && CLOUDFLARE_ACCOUNT_ID && CLOUDFLARE_API_TOKEN) plan.push({ name: 'cloudflare' });
   return plan;
 }
 
@@ -210,6 +228,26 @@ export async function runAiJsonChain({
           baseUrl: 'https://api.mistral.ai/v1',
           apiKey: MISTRAL_API_KEY,
           model: MISTRAL_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else if (provider.name === 'sambanova') {
+        data = await callOpenAICompatible({
+          baseUrl: 'https://api.sambanova.ai/v1',
+          apiKey: SAMBANOVA_API_KEY,
+          model: SAMBANOVA_MODEL,
+          systemPrompt,
+          userText,
+          timeoutMs,
+          maxTokens,
+        });
+      } else if (provider.name === 'cloudflare') {
+        data = await callOpenAICompatible({
+          baseUrl: `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1`,
+          apiKey: CLOUDFLARE_API_TOKEN,
+          model: CLOUDFLARE_MODEL,
           systemPrompt,
           userText,
           timeoutMs,

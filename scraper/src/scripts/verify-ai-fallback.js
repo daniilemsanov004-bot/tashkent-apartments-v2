@@ -1,5 +1,5 @@
 // Диагностика цепочки AI-провайдеров (Gemini → Groq → OpenRouter →
-// Mistral), не трогает production-логику — только читает те же
+// Mistral → SambaNova → Cloudflare Workers AI), не трогает production-логику — только читает те же
 // ENV-переменные, что и aiProviders.js, и показывает, что реально
 // произойдёт при следующем запуске скрейпера.
 //
@@ -34,6 +34,9 @@ console.log(maskedStatus('GEMINI_API_KEY', process.env.GEMINI_API_KEY));
 console.log(maskedStatus('GROQ_API_KEY', process.env.GROQ_API_KEY));
 console.log(maskedStatus('OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY));
 console.log(maskedStatus('MISTRAL_API_KEY', process.env.MISTRAL_API_KEY));
+console.log(maskedStatus('SAMBANOVA_API_KEY', process.env.SAMBANOVA_API_KEY));
+console.log(maskedStatus('CLOUDFLARE_ACCOUNT_ID', process.env.CLOUDFLARE_ACCOUNT_ID));
+console.log(maskedStatus('CLOUDFLARE_API_TOKEN', process.env.CLOUDFLARE_API_TOKEN));
 console.log(`AI_FALLBACK_ENABLED: ${process.env.AI_FALLBACK_ENABLED === 'true' ? 'да' : 'нет (fallback-провайдеры пропускаются, даже если ключи заданы)'}`);
 
 const plan = providerPlan();

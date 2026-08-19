@@ -23,6 +23,31 @@ const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
+
+// Мини circuit breaker на весь прогон: если провайдер падает по
+// 429 (квота/рейт-лимит) или 402 (нет денег на счету) несколько раз
+// подряд, это почти наверняка не восстановится до следующего запуска
+// через 15 минут — нет смысла ходить к нему на КАЖДОМ объявлении и
+// ждать таймаут/ретрай. Отключаем его до конца текущего прогона, и
+// цепочка сразу идёт к следующему провайдеру, экономя секунды на
+// каждое объявление (при 40+ объявлениях за прогон это минуты).
+const CIRCUIT_BREAKER_STATUSES = new Set([429, 402]);
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const providerFailureStreak = new Map();
+const providerDisabledForRun = new Set();
+
+function noteProviderResult(name, err) {
+  const status = err?.response?.status;
+  if (status && CIRCUIT_BREAKER_STATUSES.has(status)) {
+    const streak = (providerFailureStreak.get(name) || 0) + 1;
+    providerFailureStreak.set(name, streak);
+    if (streak >= CIRCUIT_BREAKER_THRESHOLD) {
+      providerDisabledForRun.add(name);
+    }
+  } else {
+    providerFailureStreak.set(name, 0);
+  }
+}
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const PROVIDER_DELAY_MS = 250;
 
@@ -119,10 +144,10 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, user
 
 export function providerPlan() {
   const plan = [];
-  if (GEMINI_API_KEY) plan.push({ name: 'gemini', enabled: true });
-  if (AI_FALLBACK_ENABLED && GROQ_API_KEY) plan.push({ name: 'groq', enabled: true });
-  if (AI_FALLBACK_ENABLED && CEREBRAS_API_KEY) plan.push({ name: 'cerebras', enabled: true });
-  if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY) plan.push({ name: 'openrouter', enabled: true });
+  if (GEMINI_API_KEY && !providerDisabledForRun.has('gemini')) plan.push({ name: 'gemini', enabled: true });
+  if (AI_FALLBACK_ENABLED && GROQ_API_KEY && !providerDisabledForRun.has('groq')) plan.push({ name: 'groq', enabled: true });
+  if (AI_FALLBACK_ENABLED && CEREBRAS_API_KEY && !providerDisabledForRun.has('cerebras')) plan.push({ name: 'cerebras', enabled: true });
+  if (AI_FALLBACK_ENABLED && OPENROUTER_API_KEY && !providerDisabledForRun.has('openrouter')) plan.push({ name: 'openrouter', enabled: true });
   return plan;
 }
 
@@ -212,6 +237,10 @@ export async function runAiJsonChain({
     } catch (err) {
       lastError = err;
       console.warn(`${taskName}: provider ${provider.name} failed (${err.response?.status || err.message})`);
+      noteProviderResult(provider.name, err);
+      if (providerDisabledForRun.has(provider.name)) {
+        console.warn(`${taskName}: provider ${provider.name} отключён до конца прогона (повторный 429/402)`);
+      }
       if (!AI_FALLBACK_ENABLED && provider.name === 'gemini') break;
       if (!isRetryableError(err) && provider.name === 'gemini' && !AI_FALLBACK_ENABLED) break;
       await sleep(PROVIDER_DELAY_MS);

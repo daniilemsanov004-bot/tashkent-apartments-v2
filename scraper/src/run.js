@@ -759,7 +759,19 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       continue;
     }
 
-    if (previousForSameId && !sameIdPriceChanged) {
+    // 19.08.2026: БЫЛО — если объявление с этим же id уже есть в базе
+    // и цена не менялась, считали, что оно уже отправлено, и просто
+    // молча ставили notified=true без реальной отправки. Баг: если
+    // ПРЕДЫДУЩИЙ прогон успел сохранить объявление (saveListing выше,
+    // notified: false) но не успел дойти до notifyToTopicGroup —
+    // прогон оборвался по timeout-minutes, упал с необработанной
+    // ошибкой, или Telegram API не ответил (см. catch вокруг
+    // notifyToTopicGroup ниже — он тоже НЕ ставит notified при сбое) —
+    // то объявление молча помечалось отправленным и терялось навсегда,
+    // ни разу реально не уйдя в Telegram. Теперь пропускаем повторную
+    // отправку ТОЛЬКО если оно было ДЕЙСТВИТЕЛЬНО отправлено раньше
+    // (previousForSameId.notified), а не просто "уже есть в базе".
+    if (previousForSameId && !sameIdPriceChanged && previousForSameId.notified) {
       await markNotified(listing.id);
       continue;
     }

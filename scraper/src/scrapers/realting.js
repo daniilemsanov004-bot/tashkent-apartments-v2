@@ -295,14 +295,39 @@ export async function fetchRealtingDetails(url) {
     $('[class*="description"]').first().text().trim() ||
     $('[itemprop="description"]').first().text().trim();
 
-  if (!description) {
-    // запасной вариант: самый длинный текстовый блок на странице
+  // 19.08.2026: фолбэк "самый длинный текстовый блок" иногда ловил не
+  // абзац описания, а соседний служебный блок страницы (цена/счётчик
+  // фото/кнопка "Рекомендовать" — всё это лежит рядом с описанием в
+  // одном родительском div и суммарно текста там больше, чем в самом
+  // описании). Признак такого блока — он состоит из коротких строк-
+  // ярлыков интерфейса, а не связного текста продавца. Отсекаем два
+  // источника ложных срабатываний:
+  //  1) явные фразы интерфейса Realting, которые не может написать
+  //     продавец в описании;
+  //  2) блоки без единого предложения (нет точки/запятой И длиннее
+  //     одного слова) — реальное описание почти всегда хотя бы одно
+  //     предложение, а ярлыки типа "Цена по запросу"/"1"/"Рекомендовать"
+  //     идут короткими строками без пунктуации.
+  const UI_CHROME_RE = /Рекомендовать|Цена по запросу|Показать номер|Написать продавцу|^\d+$/im;
+
+  function looksLikeRealDescription(text) {
+    if (!text || text.length < 40) return false;
+    if (UI_CHROME_RE.test(text)) return false;
+    const hasSentencePunctuation = /[.,!?]/.test(text);
+    const hasMultipleWords = text.trim().split(/\s+/).length >= 6;
+    return hasSentencePunctuation && hasMultipleWords;
+  }
+
+  if (!looksLikeRealDescription(description)) {
+    // запасной вариант: самый длинный текстовый блок на странице,
+    // который при этом реально похож на описание (см. выше), а не на
+    // обрывок интерфейса.
     let longest = '';
     $('div, p').each((_, el) => {
       const t = $(el).clone().children().remove().end().text().trim();
-      if (t.length > longest.length && t.length < 3000) longest = t;
+      if (looksLikeRealDescription(t) && t.length > longest.length && t.length < 3000) longest = t;
     });
-    description = longest;
+    if (longest) description = longest;
   }
 
   const sellerName =

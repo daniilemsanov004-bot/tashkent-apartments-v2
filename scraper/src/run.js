@@ -149,8 +149,27 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
   // никак не было видно, пока кто-то не заметил руками).
   let sellerLinkMissingCount = 0;
   let sellerCheckedCount = 0;
+  // Circuit breaker: если сайт-источник блокирует/тормозит буквально
+  // КАЖДЫЙ запрос к странице объявления (см. инцидент 19.08.2026 —
+  // Domtut, судя по всему, начал массово ронять запросы с IP GitHub
+  // Actions, и прогон, вместо того чтобы быстро сдаться, честно
+  // отрабатывал retry+backoff (getWithRetry, до ~47с на URL) на
+  // КАЖДОМ из десятков объявлений подряд — один прогон растянулся на
+  // часы, следующие триггеры cron-job.org накапливались друг на
+  // друга, потому что в scrape.yml нет concurrency-группы, и в итоге
+  // объявления не доходили ни в Telegram, ни на сайт часами). Если
+  // подряд не удаётся получить details для нескольких объявлений
+  // ПОДРЯД — почти наверняка источник блокирует нас целиком на этом
+  // прогоне, а не единичный сбой сети. Останавливаем этот источник
+  // прямо сейчас, остальные его объявления просто попробуются
+  // заново в следующем прогоне (через 15 минут) — так безопаснее,
+  // чем упрямо жечь время на заведомо обречённые запросы.
+  const DETAILS_CIRCUIT_BREAKER_THRESHOLD = 8;
+  let consecutiveDetailFailures = 0;
+  let circuitBreakerTripped = false;
 
   for (const item of items) {
+    if (circuitBreakerTripped) break;
     const existingById = await getListingById(item.id);
     const listPrice = parsePrice(item.price);
     const hasBackfilledScoring =
@@ -234,9 +253,20 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       // так что тут его не перезаписываем.
       if (details?.locationDistrict && !item.raw_district) item.raw_district = details.locationDistrict;
       if (details?.imageUrl && !item.image_url) item.image_url = details.imageUrl;
+      consecutiveDetailFailures = 0;
     } catch (err) {
       detailsFetchFailed = true;
       console.warn(`[${sourceLabel}] не удалось получить текст объявления ${item.url}:`, err.message);
+      consecutiveDetailFailures++;
+      if (consecutiveDetailFailures >= DETAILS_CIRCUIT_BREAKER_THRESHOLD) {
+        circuitBreakerTripped = true;
+        console.error(
+          `[${sourceLabel}] ${consecutiveDetailFailures} объявлений подряд не удалось открыть — похоже, источник блокирует этот прогон целиком. Останавливаю ${sourceLabel} досрочно, оставшиеся объявления попробуются в следующем прогоне.`
+        );
+        await notifyAlert(
+          `⚠️ [${sourceLabel}] ${consecutiveDetailFailures} объявлений подряд не открылись (похоже на блокировку источника) — прогон источника остановлен досрочно, чтобы не тратить часы на заведомо обречённые запросы. Оставшиеся объявления попробуются в следующем прогоне через 15 минут.`
+        );
+      }
     }
 
     // Последний, самый дешёвый шанс поймать сегмент — по итоговому

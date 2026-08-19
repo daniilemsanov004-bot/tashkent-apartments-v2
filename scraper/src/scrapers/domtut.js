@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
 import { detectMarketSegment } from '../marketSegment.js';
+import { findAgentTextSignal } from '../agentSignals.js';
 
 const DOMTUT_ENABLED = process.env.DOMTUT_ENABLED !== 'false';
 const DOMTUT_BASE = 'https://domtut.uz';
@@ -42,6 +43,24 @@ const DOMTUT_CATEGORIES = {
 const PRICE_RE = /\d{1,3}(?:[\s\u00A0]\d{3})*\s*(?:сум|soʻm|so'm|usd|\$|у\.?\s?е\.?)/i;
 const DISTRICT_RE = /(Алмазарский|Бектемирский|Чиланзарский|Мирабадский|Мирзо[-\s]?Улугбекский|Яккасарайский|Яшнабадский|Юнусабадский|Сергелийский|Шайхонтохурский|Ташкентский|Olmazor|Bektemir|Chilonzor|Mirobod|Mirzo Ulug'?bek|Yakkasaroy|Yashnobod|Yunusobod|Sergeli|Shayxontohur)/i;
 const LISTING_LINK_RE = /\/nedvizhimost\/[^"'?#\s]+/i;
+
+// Domtut, в отличие от Realting/Uybor, НЕ размечает продавца как
+// "частник"/"агентство" сам — сайт в основном про новостройки от
+// застройщиков (см. разведку конкурентов в истории проекта), а
+// объявление от частного лица там скорее исключение. Раз готового
+// поля нет, определяем организацию/агентство по явным признакам в
+// тексте самой страницы объявления (см. fetchDomtutDetails):
+//  - слово "Застройщик"/"Quruvchi"/"Ishlab chiquvchi" — застройщик
+//    прямым текстом называет себя так, частник этого не пишет;
+//  - организационно-правовая форма в названии продавца (ООО/MCHJ/
+//    ЧП/АО/ОАО/ХК и т.п.) — тоже однозначный признак юрлица;
+// Отдельно от этого run.js всё равно прогоняет generic-проверку
+// findAgentTextSignal() по названию+описанию для ВСЕХ источников
+// (риэлтор/агентство/брокер/"наша компания" и т.п.) — тут не
+// дублируем её целиком, а используем ту же функцию только чтобы
+// решить sellerNameLooksLikeAgent для Owner Score (см. ниже).
+const DEVELOPER_RE = /Застройщик|Quruvchi|Ishlab\s+chiquvchi/i;
+const LEGAL_ENTITY_RE = /\b(?:ООО|MCHJ|ЧП|XK|ХК|АО|ОАО|ЧЖ|QK|ЙИТИ|ИЧП)\b/i;
 
 function absUrl(href) {
   if (!href) return null;
@@ -197,12 +216,15 @@ export async function fetchDomtutDetails(url) {
     const rawText = `${title}\n${description}`.trim();
     const sellerName =
       /(?:Застройщик|Quruvchi|Ishlab chiquvchi)\s+([^\n|]+)/i.exec(rawText)?.[1]?.trim() || null;
+    const isOrganization = Boolean(
+      DEVELOPER_RE.test(rawText) || LEGAL_ENTITY_RE.test(rawText) || findAgentTextSignal(rawText)
+    );
     return {
       description,
       sellerName,
       sellerListingsUrl: null,
-      sellerIsOrganization: false,
-      sellerNameLooksLikeAgent: false,
+      sellerIsOrganization: isOrganization,
+      sellerNameLooksLikeAgent: isOrganization,
       marketSegment: detectMarketSegment(rawText) || 'new_build',
     };
   } catch (err) {

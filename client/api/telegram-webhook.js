@@ -165,11 +165,51 @@ function priceKeyboard() {
   return [[{ text: '💸 Без ограничений по цене', callback_data: 'p:any' }]];
 }
 
-function resultsKeyboard(hasMore) {
+const PRICE_STEP_TEXT =
+  'Диапазон цены?\n\nОтветьте (Reply) на это сообщение, например: <code>300-800 млн</code>, <code>от 2 млрд</code>, <code>500-1500$</code> — или нажмите кнопку ниже, если цена неважна.';
+
+// Для коммерции шаг "Сколько комнат?" не имеет смысла (офис/склад/
+// магазин считаются не комнатами, а площадью) — пропускаем его сразу
+// на цену, вместо того чтобы предлагать заведомо нерелевантный выбор.
+function goToRoomsOrPriceStep(session, filters) {
+  if (filters.propertyType === 'commercial') {
+    filters.rooms = 'any';
+    session.step = 'price';
+  } else {
+    session.step = 'rooms';
+  }
+}
+
+function sendRoomsOrPriceMessage(chatId, messageId, filters) {
+  if (filters.propertyType === 'commercial') {
+    return editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
+  }
+  return editMessageText(chatId, messageId, 'Сколько комнат?', { reply_markup: { inline_keyboard: roomsKeyboard() } });
+}
+
+function resultsKeyboard(hasMore, hasPrev) {
   const row = [];
+  // По просьбе пользователя (20.08.2026): "Ещё" сдвигал offset только
+  // вперёд — старые уже показанные объявления пролистать назад было
+  // нельзя. Добавили симметричную кнопку "Назад" — она просто уменьшает
+  // тот же offset (см. 'back' в handleCallback), список результатов
+  // (state.results) уже целиком лежит в сессии, повторный поиск не нужен.
+  if (hasPrev) row.push({ text: '⬅️ Назад', callback_data: 'back' });
   if (hasMore) row.push({ text: '➡️ Ещё', callback_data: 'more' });
-  row.push({ text: '🔄 Новый поиск', callback_data: 'new' });
-  return [row];
+  return [row, [{ text: '🔄 Новый поиск', callback_data: 'new' }]];
+}
+
+// Telegram передаёт message_thread_id только в супергруппах с
+// включёнными "темами" (forum topics) — и только когда сообщение
+// реально отправлено внутри конкретной темы (не в "General"). Раньше
+// бот всегда отвечал через обычный sendMessage без этого поля —
+// Telegram в таком случае кладёт ответ в General, а не в ту тему, где
+// человек написал команду (жалоба пользователя 20.08.2026). Просто
+// подмешиваем это поле в extra для sendMessage, где он есть, и
+// молча ничего не добавляем, если сообщение вне тем (обычный чат/
+// группа без тем, или тема "General", у которой thread_id нет).
+function threadExtra(threadId) {
+  return threadId ? { message_thread_id: threadId } : {};
 }
 
 async function toggleFlaggedAgent(chatId, messageId, listingId, agentName, callbackId) {
@@ -217,9 +257,10 @@ async function toggleFlaggedAgent(chatId, messageId, listingId, agentName, callb
 // сам. Так надёжнее, чем "просто следующее сообщение в чате" — в
 // групповом чате между нажатием кнопки и ответом агента может
 // проскочить сообщение от кого-то другого.
-async function promptForNote(chatId, cardMessageId, listingId, userId) {
+async function promptForNote(chatId, cardMessageId, listingId, userId, threadId) {
   const res = await sendMessage(chatId, '✏️ Напишите заметку ОТВЕТОМ (Reply) на это сообщение.', {
     reply_to_message_id: cardMessageId,
+    ...threadExtra(threadId),
   });
   const promptMessageId = res?.result?.message_id;
   if (!promptMessageId) return;
@@ -236,7 +277,7 @@ async function tryHandleNoteReply(message) {
   await supabase.from('listings').update({ notes: message.text.slice(0, 500) }).eq('id', session.listingId);
   await refreshListingMessage(chatId, session.cardMessageId, session.listingId);
   await saveSession(chatId, userId, {});
-  await sendMessage(chatId, '📝 Заметка сохранена.');
+  await sendMessage(chatId, '📝 Заметка сохранена.', threadExtra(message.message_thread_id));
   return true;
 }
 
@@ -256,8 +297,10 @@ function filtersSummary(filters) {
     DEAL_LABEL[filters.dealType] || '',
     PROPERTY_LABEL[filters.propertyType] || '',
     filters.districts?.length ? filters.districts.join(', ') : 'любой район',
-    `комнат: ${roomsLabel(filters.rooms)}`,
   ];
+  if (filters.propertyType !== 'commercial') {
+    parts.push(`комнат: ${roomsLabel(filters.rooms)}`);
+  }
   if (filters.priceRange) {
     const { min, max, currency } = filters.priceRange;
     const unit = currency === 'USD' ? '$' : 'сум';
@@ -356,6 +399,7 @@ async function renderResultsPage(chatId, messageId, state) {
   const { results, offset, filters } = state;
   const page = results.slice(offset, offset + RESULTS_PAGE_SIZE);
   const hasMore = offset + RESULTS_PAGE_SIZE < results.length;
+  const hasPrev = offset > 0;
 
   let text;
   if (results.length === 0) {
@@ -365,12 +409,12 @@ async function renderResultsPage(chatId, messageId, state) {
     text = header + page.map(listingLine).join('\n\n');
   }
 
-  await editMessageText(chatId, messageId, text, { reply_markup: { inline_keyboard: resultsKeyboard(hasMore) } });
+  await editMessageText(chatId, messageId, text, { reply_markup: { inline_keyboard: resultsKeyboard(hasMore, hasPrev) } });
 }
 
 // ---------- main step handlers ----------
 
-async function startWizard(chatId, userId, existingMessageId) {
+async function startWizard(chatId, userId, existingMessageId, threadId) {
   const text = 'Выберите тип сделки:';
   const markup = { reply_markup: { inline_keyboard: dealTypeKeyboard() } };
 
@@ -378,7 +422,7 @@ async function startWizard(chatId, userId, existingMessageId) {
   if (existingMessageId) {
     await editMessageText(chatId, existingMessageId, text, markup);
   } else {
-    const res = await sendMessage(chatId, text, markup);
+    const res = await sendMessage(chatId, text, { ...markup, ...threadExtra(threadId) });
     messageId = res?.result?.message_id;
   }
 
@@ -412,7 +456,7 @@ async function handleCallback(update) {
     return;
   }
   if (data.startsWith('nt:')) {
-    await promptForNote(chatId, messageId, data.slice(3), userId);
+    await promptForNote(chatId, messageId, data.slice(3), userId, cb.message.message_thread_id);
     await answerCallbackQuery(cb.id);
     return;
   }
@@ -448,15 +492,11 @@ async function handleCallback(update) {
     const slug = data.slice(2);
     if (slug === 'any') {
       filters.districts = [];
-      session.step = 'rooms';
-      await editMessageText(chatId, messageId, 'Сколько комнат?', {
-        reply_markup: { inline_keyboard: roomsKeyboard() },
-      });
+      goToRoomsOrPriceStep(session, filters);
+      await sendRoomsOrPriceMessage(chatId, messageId, filters);
     } else if (slug === 'done') {
-      session.step = 'rooms';
-      await editMessageText(chatId, messageId, 'Сколько комнат?', {
-        reply_markup: { inline_keyboard: roomsKeyboard() },
-      });
+      goToRoomsOrPriceStep(session, filters);
+      await sendRoomsOrPriceMessage(chatId, messageId, filters);
     } else {
       const canonical = districtFromSlug(slug);
       if (canonical) {
@@ -471,12 +511,7 @@ async function handleCallback(update) {
   } else if (data.startsWith('r:')) {
     filters.rooms = data.slice(2);
     session.step = 'price';
-    await editMessageText(
-      chatId,
-      messageId,
-      'Диапазон цены?\n\nОтветьте (Reply) на это сообщение, например: <code>300-800 млн</code>, <code>от 2 млрд</code>, <code>500-1500$</code> — или нажмите кнопку ниже, если цена неважна.',
-      { reply_markup: { inline_keyboard: priceKeyboard() } }
-    );
+    await editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
   } else if (data === 'p:any') {
     filters.priceRange = null;
     const results = await runSearch(filters);
@@ -486,6 +521,9 @@ async function handleCallback(update) {
     await renderResultsPage(chatId, messageId, session);
   } else if (data === 'more') {
     session.offset = (session.offset || 0) + RESULTS_PAGE_SIZE;
+    await renderResultsPage(chatId, messageId, session);
+  } else if (data === 'back') {
+    session.offset = Math.max(0, (session.offset || 0) - RESULTS_PAGE_SIZE);
     await renderResultsPage(chatId, messageId, session);
   }
 
@@ -500,7 +538,11 @@ async function handlePriceTextReply(message) {
 
   const parsed = parsePriceRange(message.text);
   if (!parsed) {
-    await sendMessage(chatId, '🤔 Не понял диапазон. Попробуйте, например: <code>300-800 млн</code> или <code>от 500$</code>.');
+    await sendMessage(
+      chatId,
+      '🤔 Не понял диапазон. Попробуйте, например: <code>300-800 млн</code> или <code>от 500$</code>.',
+      threadExtra(message.message_thread_id)
+    );
     return true;
   }
 
@@ -534,8 +576,8 @@ function guessCurrency(sampleValue) {
   return sampleValue !== null && sampleValue !== undefined && sampleValue < 100000 ? 'USD' : 'UZS';
 }
 
-async function handleAiSearch(chatId, userId, queryText) {
-  const thinkingRes = await sendMessage(chatId, '🔎 Ищу…');
+async function handleAiSearch(chatId, userId, queryText, threadId) {
+  const thinkingRes = await sendMessage(chatId, '🔎 Ищу…', threadExtra(threadId));
   const thinkingMessageId = thinkingRes?.result?.message_id;
 
   const parsed = await parseSearchQuery(queryText);
@@ -558,7 +600,7 @@ async function handleAiSearch(chatId, userId, queryText) {
             ? '⚠️ ИИ-поиск не смог ответить ни через одного провайдера — попробуйте позже.'
           : '⏳ ИИ-поиск сейчас перегружен или недоступен — попробуйте через минуту.';
     if (thinkingMessageId) await editMessageText(chatId, thinkingMessageId, text);
-    else await sendMessage(chatId, text);
+    else await sendMessage(chatId, text, threadExtra(threadId));
     return;
   }
 
@@ -579,7 +621,7 @@ async function handleAiSearch(chatId, userId, queryText) {
     dealType: f.deal || null,
     propertyType: f.type || 'any',
     districts: f.district || [],
-    rooms: 'any', // ИИ-поиск пока не извлекает комнатность отдельным полем — она остаётся в f.q для текстового поиска ниже
+    rooms: f.rooms != null ? f.rooms : 'any', // теперь _aiSearch.js извлекает комнатность отдельным полем (rooms), runSearch уже умеет фильтровать по нему (см. выше, filters.rooms)
     priceRange,
   };
 
@@ -601,14 +643,19 @@ async function handleAiSearch(chatId, userId, queryText) {
   }
 }
 
-// Мастер поиска /find отключён (07.08.2026) — теперь объявления сами
-// разлетаются по тематическим супергруппам/темам (см.
-// notifyToTopicGroup в scraper/src/telegram.js), поэтому отдельный
-// поиск через бота стал не нужен. Код мастера (startWizard и всё,
-// что использует bot_sessions) НЕ удалён — оставлен на случай, если
-// понадобится вернуть или переделать под другую команду (например
-// "мои объявления"). Чтобы включить обратно — верните в true.
-const FIND_WIZARD_ENABLED = false;
+// Мастер поиска /find — кнопочный пошаговый фильтр (тип сделки →
+// тип недвижимости → район → комнаты → цена), НЕЗАВИСИМЫЙ от /search
+// (тот — свободный текст через ИИ). Был выключен 07.08.2026, когда
+// объявления стали сами разлетаться по тематическим супергруппам
+// (notifyToTopicGroup в scraper/src/telegram.js) — тогда казалось,
+// что отдельный поиск через бота не нужен. По просьбе пользователя
+// (20.08.2026) включаем обратно как отдельную команду — /search
+// удобен, когда точно знаешь, что хочешь написать текстом, а /find —
+// когда хочется просто потыкать кнопки без необходимости
+// формулировать запрос. Команды не конфликтуют — у каждой своя ветка
+// в handleMessage ниже, сессии (bot_sessions) общие, но handleAiSearch
+// не трогает bot_sessions.step у мастера и наоборот.
+const FIND_WIZARD_ENABLED = true;
 
 function commandName(message) {
   const entity = (message.entities || []).find((e) => e.type === 'bot_command' && e.offset === 0);
@@ -627,8 +674,8 @@ function commandArgs(message) {
   return message.text.slice(entity.length).trim();
 }
 
-async function handleClean(chatId) {
-  await sendMessage(chatId, '🧹 Чищу агентские посты...');
+async function handleClean(chatId, threadId) {
+  await sendMessage(chatId, '🧹 Чищу агентские посты...', threadExtra(threadId));
   try {
     const result = await cleanAgentMessagesBatch(25);
     let text = `Готово: удалено ${result.deleted}`;
@@ -636,19 +683,25 @@ async function handleClean(chatId) {
     text += '.';
     if (result.hasMore) text += '\n\nЕщё остались — наберите /clean ещё раз.';
     if (result.processed === 0) text = 'Чистить нечего — новых агентских постов не найдено.';
-    await sendMessage(chatId, text);
+    await sendMessage(chatId, text, threadExtra(threadId));
   } catch (err) {
     console.error('Ошибка команды /clean:', err);
-    await sendMessage(chatId, `⚠️ Не получилось: ${err.message}`);
+    await sendMessage(chatId, `⚠️ Не получилось: ${err.message}`, threadExtra(threadId));
   }
 }
 
 async function handleMessage(message) {
   if (await tryHandleNoteReply(message)) return;
 
+  // message_thread_id есть только в супергруппах с включёнными темами
+  // (forum topics), и только когда сообщение отправлено внутри
+  // конкретной темы — прокидываем его дальше, чтобы ответ бота ушёл
+  // туда же, а не в General (см. threadExtra выше по файлу).
+  const threadId = message.message_thread_id;
+
   const cmd = commandName(message);
   if (cmd === '/clean') {
-    await handleClean(message.chat.id);
+    await handleClean(message.chat.id, threadId);
     return;
   }
   if (cmd === '/search' || cmd === '/найти') {
@@ -656,23 +709,40 @@ async function handleMessage(message) {
     if (!queryText) {
       await sendMessage(
         message.chat.id,
-        'Напишите после команды, что ищете, например:\n<code>/search 3-комнатная в Юнусабаде до 80000$, только от собственника</code>'
+        'Напишите после команды, что ищете, например:\n<code>/search 3-комнатная в Юнусабаде до 80000$, только от собственника</code>',
+        threadExtra(threadId)
       );
       return;
     }
-    await handleAiSearch(message.chat.id, message.from.id, queryText);
+    await handleAiSearch(message.chat.id, message.from.id, queryText, threadId);
     return;
   }
-  if (cmd === '/start' || cmd === '/find') {
+  if (cmd === '/start') {
+    // /start — просто приветствие с подсказкой по обеим командам, а не
+    // сразу мастер: человек может добавить бота в группу и написать
+    // /start случайно/не глядя — сразу вываливать пошаговый мастер
+    // было бы навязчиво. Сам мастер — по явной команде /find (или
+    // /filter/фильтр), см. ниже.
+    await sendMessage(
+      message.chat.id,
+      '👋 Привет! Два способа искать:\n\n' +
+        '🔍 <code>/find</code> — пошаговый фильтр кнопками (тип сделки, район, комнаты, цена)\n' +
+        '💬 <code>/search текст</code> — опишите словами, например:\n<code>/search 3-комнатная в Юнусабаде до 80000$, только от собственника</code>',
+      threadExtra(threadId)
+    );
+    return;
+  }
+  if (cmd === '/find' || cmd === '/filter' || cmd === '/фильтр') {
     if (!FIND_WIZARD_ENABLED) {
       await sendMessage(
         message.chat.id,
         'Поиск через кнопки сейчас выключен — объявления сами приходят в свою тему группы по типу и району.\n\n' +
-          'Но можно спросить своими словами: <code>/search 3-комнатная в Юнусабаде до 80000$</code>'
+          'Но можно спросить своими словами: <code>/search 3-комнатная в Юнусабаде до 80000$</code>',
+        threadExtra(threadId)
       );
       return;
     }
-    await startWizard(message.chat.id, message.from.id, null);
+    await startWizard(message.chat.id, message.from.id, null, threadId);
     return;
   }
   if (message.text && !cmd) {

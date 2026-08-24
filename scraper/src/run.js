@@ -540,7 +540,16 @@ async function processSource(fetchList, fetchDetails, sourceName, dealType, fetc
       await sleep(isProviderActiveThisRun('gemini') ? LLM_EXTRACT_DELAY_MS : LLM_EXTRACT_DELAY_MS_NO_GEMINI);
     }
 
-    const rooms = classification.rooms ?? llmInfo.rooms;
+    // Для коммерции ("офис", "склад", "магазин" и т.п.) понятие
+    // "комнаты" не имеет смысла — но regex/LLM-парсер работает по
+    // тексту объявления вслепую и иногда всё равно цепляет число
+    // (например путает "5 кабинетов"/"3 санузла" с комнатами), из-за
+    // чего в карточке коммерческого объявления вылезает нелепое
+    // "5-комн. Офис в аренду...". Обнуляем rooms сразу здесь, а не
+    // точечно в каждом месте отображения (webhook/сайт/telegram.js) —
+    // так гарантированно нет источника, откуда это число могло бы
+    // просочиться повторно.
+    const rooms = propertyType === 'commercial' ? null : (classification.rooms ?? llmInfo.rooms);
     const area = classification.area ?? llmInfo.area_living;
 
     // Сегмент (новостройка/вторичка) — LLM как последний фолбэк, если

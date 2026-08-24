@@ -101,6 +101,17 @@ export default async function handler(req, res) {
     }
   }
 
+  // Раньше комнатность вообще нельзя было отфильтровать через API
+  // сайта (столбец в базе есть, но фильтра не было ни в ручных
+  // фильтрах, ни в ИИ-поиске — см. _aiSearch.js) — теперь ИИ-поиск
+  // умеет извлекать rooms из текста, и он должен куда-то применяться.
+  if (req.query.rooms === '5plus') {
+    query = query.gte('rooms', 5);
+  } else if (req.query.rooms) {
+    const roomsNum = Number(req.query.rooms);
+    if (Number.isFinite(roomsNum)) query = query.eq('rooms', roomsNum);
+  }
+
   // Цена: price_value — просто число без учёта валюты, поэтому
   // диапазон имеет смысл только вместе с выбранной валютой (иначе
   // сравниваются несопоставимые величины — доллары и суммы).

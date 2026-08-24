@@ -523,6 +523,7 @@ function Dashboard() {
   const [search, setSearch] = useState('');
   const [dealFilter, setDealFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [roomsFilter, setRoomsFilter] = useState('all');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [contactedFilter, setContactedFilter] = useState('all');
   const [daysRange, setDaysRange] = useState('3');
@@ -562,6 +563,13 @@ function Dashboard() {
     const id = setTimeout(() => setSearch(searchInput.trim()), DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [searchInput]);
+
+  // Комнатность не применима к коммерции — если переключились на неё
+  // (руками или через ИИ-поиск), снимаем ранее выбранный rooms-фильтр,
+  // а не оставляем его тихо висеть в URL за скрытым селектом.
+  useEffect(() => {
+    if (typeFilter === 'commercial' && roomsFilter !== 'all') setRoomsFilter('all');
+  }, [typeFilter, roomsFilter]);
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -641,6 +649,7 @@ function Dashboard() {
       setDistrictFilter(r.district || []);
       setDealFilter(r.deal || 'all');
       setTypeFilter(r.type || 'all');
+      setRoomsFilter(r.rooms != null ? String(r.rooms) : 'all');
       setBadgeFilter(r.badge || 'all');
       setPriceCurrency(r.currency || 'all');
 
@@ -673,6 +682,7 @@ function Dashboard() {
     if (search) params.set('q', search);
     if (dealFilter !== 'all') params.set('deal', dealFilter);
     if (typeFilter !== 'all') params.set('type', typeFilter);
+    if (roomsFilter !== 'all') params.set('rooms', roomsFilter);
     if (badgeFilter !== 'all') params.set('badge', badgeFilter);
     if (contactedFilter !== 'all') {
       params.set('contacted', contactedFilter === 'contacted' ? 'yes' : 'no');
@@ -685,7 +695,7 @@ function Dashboard() {
     if (assignedFilter === 'none') params.set('assigned', 'none');
     if (dealsOnly) params.set('deals', 'true');
     return `/api/listings?${params.toString()}`;
-  }, [daysRange, search, dealFilter, typeFilter, badgeFilter, contactedFilter, districtFilter, sortBy, priceCurrency, priceMin, priceMax, assignedFilter, dealsOnly]);
+  }, [daysRange, search, dealFilter, typeFilter, roomsFilter, badgeFilter, contactedFilter, districtFilter, sortBy, priceCurrency, priceMin, priceMax, assignedFilter, dealsOnly]);
 
   const fetchStats = useCallback(async () => {
     const res = await authFetch(`/api/stats?days=${daysRange}`);
@@ -874,6 +884,7 @@ function Dashboard() {
     setSearch('');
     setDealFilter('all');
     setTypeFilter('all');
+    setRoomsFilter('all');
     setBadgeFilter('all');
     setContactedFilter('all');
     setDistrictFilter([]);
@@ -887,7 +898,7 @@ function Dashboard() {
   }, []);
 
   const filtersActive =
-    search || dealFilter !== 'all' || typeFilter !== 'all' || badgeFilter !== 'all' ||
+    search || dealFilter !== 'all' || typeFilter !== 'all' || roomsFilter !== 'all' || badgeFilter !== 'all' ||
     contactedFilter !== 'all' || districtFilter.length > 0 || sortBy !== 'new' ||
     priceCurrency !== 'all' || priceMin || priceMax || assignedFilter !== 'all';
 
@@ -995,6 +1006,16 @@ function Dashboard() {
             <option value="house">Дома</option>
             <option value="commercial">Коммерция</option>
           </select>
+          {typeFilter !== 'commercial' && (
+            <select value={roomsFilter} onChange={(e) => setRoomsFilter(e.target.value)}>
+              <option value="all">Любая комнатность</option>
+              <option value="1">1 комната</option>
+              <option value="2">2 комнаты</option>
+              <option value="3">3 комнаты</option>
+              <option value="4">4 комнаты</option>
+              <option value="5plus">5+ комнат</option>
+            </select>
+          )}
           <select value={badgeFilter} onChange={(e) => setBadgeFilter(e.target.value)}>
             <option value="all">Все объявления</option>
             <option value="owner">Только собственники</option>

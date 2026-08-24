@@ -1,6 +1,19 @@
 import * as cheerio from 'cheerio';
 import { getWithRetry } from '../http.js';
 import { detectMarketSegment } from '../marketSegment.js';
+import { normalizeDistrict } from '../districts.js';
+
+// Тот же паттерн, что и в olx.js (AGENT_NAME_HINT_RE) — вынесен сюда
+// отдельной константой, т.к. между scraper-модулями нет общего файла
+// для таких мелких хелперов (см. аналогичное решение с districts.js/
+// _districts.js — оговорено там же). Ловит компанию/бренд в имени
+// продавца ("XYZ Real Estate", "Тошкент Недвижимость" и т.п.) — это
+// работает НЕЗАВИСИМО от метки "Частный продавец"/"Агентство" самого
+// сайта и от fsbo-фильтра, которые, как показала практика (см. жалобу
+// пользователя 20.08.2026 — агентские объявления просачиваются под
+// видом собственника даже через /fsbo), сайту доверять не на 100%.
+const AGENT_NAME_HINT_RE =
+  /риэлтор|риелтор|realtor|\brealty\b|real\s*estate|недвижимост|агентств|\bagency\b|\bagent\b/i;
 
 // У Realting.uz, в отличие от OLX и Uybor, ЕСТЬ готовый встроенный
 // фильтр "от собственника" — отдельные SEO-страницы /fsbo (For Sale
@@ -336,6 +349,15 @@ export async function fetchRealtingDetails(url) {
     $('.company-info-desc .company-title').first().text().trim() ||
     null;
 
+  // Простая, дешёвая проверка независимая от метки сайта: если имя/
+  // название продавца само по себе звучит как компания/риелтор —
+  // считаем это агентом, даже если страница (или fsbo-фильтр) говорит
+  // "Частный продавец". См. AGENT_NAME_HINT_RE выше. run.js уже умеет
+  // читать это поле для ЛЮБОГО источника (см. sellerNameLooksLikeAgent
+  // в run.js, изначально сделано для OLX/Joymee/DomTut) — здесь просто
+  // подключаем Realting к тому же самому общему механизму.
+  const sellerNameLooksLikeAgent = Boolean(sellerName && AGENT_NAME_HINT_RE.test(sellerName));
+
   // Метка "Частный продавец"/"Агентство" на странице объявления —
   // подтверждено вживую 11.08.2026 (реальный HTML страницы): лежит в
   // блоке продавца, например <div class="color-dark">Частный
@@ -360,6 +382,31 @@ export async function fetchRealtingDetails(url) {
     }
   });
 
+  // 20.08.2026: жалоба пользователя — район с Realting часто не
+  // вытягивается. Структурный блок #blockAddress не всегда есть на
+  // странице (сайт то и дело меняет вёрстку, см. историю багов выше
+  // по файлу) — вместо того чтобы просто отдавать null, пробуем ещё
+  // два узких, безопасных источника, ПРЕЖДЕ чем сдаться:
+  //  1) og:title / meta title / <title> — Realting почти всегда
+  //     пишет туда полный адрес вида "3-комн. квартира, Юнусабадский
+  //     район, Ташкент" — короткая строка, поэтому риск случайно
+  //     задеть чужой район (например из меню-фильтра) минимальный.
+  //  2) хлебные крошки (breadcrumbs) — тоже короткий, предсказуемый
+  //     список ссылок, а не весь body.
+  // Специально НЕ используем normalizeDistrict(pageText) по всему
+  // телу страницы — там почти наверняка есть меню/фильтр со списком
+  // ВСЕХ районов сразу, и совпадёт первый по порядку в DISTRICTS, а
+  // не тот, что реально относится к объявлению.
+  if (!locationDistrict) {
+    const titleText =
+      $('meta[property="og:title"]').attr('content') || $('title').text() || '';
+    locationDistrict = normalizeDistrict(titleText);
+  }
+  if (!locationDistrict) {
+    const breadcrumbsText = $('[class*="breadcrumb"]').text();
+    locationDistrict = normalizeDistrict(breadcrumbsText);
+  }
+
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
 
   // См. marketSegment.js — ищем по всему тексту страницы, как и
@@ -373,6 +420,7 @@ export async function fetchRealtingDetails(url) {
     sellerListingsUrl: null,
     imageUrl,
     sellerType,
+    sellerNameLooksLikeAgent,
     locationDistrict,
     marketSegment,
   };

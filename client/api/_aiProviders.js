@@ -58,7 +58,17 @@ const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instr
 // scraper/src/aiProviders.js.
 const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast';
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 40000;
+// 20.08.2026: в проекте не было vercel.json — Vercel сам обрубает
+// serverless-функцию по своему дефолтному лимиту (10с на Hobby, чуть
+// больше на Pro), а вся эта цепочка была рассчитана на 40с ТАЙМАУТ
+// НА КАЖДОГО провайдера (см. DEFAULT_TIMEOUT_MS ниже) — то есть
+// платформа убивала функцию на середине первого же вызова к Gemini,
+// весь фолбэк на остальных 5 провайдеров попросту не успевал
+// начаться. Добавлен client/vercel.json (maxDuration: 60 — потолок
+// Hobby-плана без Fluid Compute) + таймауты здесь урезаны так, чтобы
+// вся цепочка из 6 провайдеров гарантированно укладывалась в эти 60с
+// даже в худшем случае (все провайдеры недоступны/долго отвечают).
+const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 8000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const PROVIDER_DELAY_MS = 250;
 
@@ -97,42 +107,38 @@ async function fetchJson(url, options, timeoutMs) {
 }
 
 async function callGemini({ model, systemPrompt, userText, timeoutMs, maxTokens = 300 }) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const data = await fetchJson(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemPrompt }] },
-            contents: [{ parts: [{ text: userText }] }],
-            // temperature/top_p/top_k задепрекейчены для текущих
-            // Gemini flash-моделей — не отправляем. thinkingLevel:'low'
-            // отключает лишнее "размышление" модели — ранее найденный
-            // фикс таймаутов, см. историю проекта.
-            generationConfig: {
-              responseMimeType: 'application/json',
-              maxOutputTokens: maxTokens,
-              thinkingConfig: { thinkingLevel: 'low' },
-            },
-          }),
+  // Раньше здесь было 2 попытки с sleep(800) между ними — при
+  // 6-провайдерной цепочке и бюджете в 60с (см. DEFAULT_TIMEOUT_MS
+  // выше и client/vercel.json) внутренний повтор именно у Gemini
+  // съедал непропорционально много времени за счёт одного и того же
+  // провайдера, хотя следующие 5 провайдеров в цепочке и так работают
+  // как повтор на случай сбоя. Одна попытка здесь + общий фолбэк
+  // дальше по цепочке даёт ту же устойчивость, но укладывается в
+  // бюджет по времени.
+  const data = await fetchJson(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userText }] }],
+        // temperature/top_p/top_k задепрекейчены для текущих
+        // Gemini flash-моделей — не отправляем. thinkingLevel:'low'
+        // отключает лишнее "размышление" модели — ранее найденный
+        // фикс таймаутов, см. историю проекта.
+        generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: maxTokens,
+          thinkingConfig: { thinkingLevel: 'low' },
         },
-        timeoutMs
-      );
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error('empty response');
-      return parseJsonResponse(text);
-    } catch (err) {
-      lastError = err;
-      const status = err?.response?.status;
-      const retryable = !status || RETRYABLE_STATUSES.has(status);
-      if (attempt === 2 || !retryable) break;
-      await sleep(800);
-    }
-  }
-  throw lastError || new Error('gemini failed');
+      }),
+    },
+    timeoutMs
+  );
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('empty response');
+  return parseJsonResponse(text);
 }
 
 async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userText, timeoutMs, maxTokens = 300, extraHeaders = {}, extraBody = {} }) {

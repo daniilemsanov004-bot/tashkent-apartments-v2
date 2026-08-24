@@ -205,18 +205,80 @@ export function buildMessagePayload(listing, { includeDealScore = false } = {}) 
   return { message, buttons };
 }
 
+// Telegram ограничивает caption у фото 1024 символами (у обычного
+// текстового сообщения — 4096). Наш message из buildMessagePayload
+// рассчитан на текстовый лимит, поэтому при отправке как фото его
+// надо аккуратно обрезать, а не просто рубить посередине слова/строки.
+// Обрезаем по последнему переносу строки ПЕРЕД лимитом — так не
+// разрывается ни одна строка (например "💰 $170 000" не станет "💰 $17").
+function trimToCaption(text, max = 1024) {
+  if (text.length <= max) return text;
+  const ellipsis = '\n…';
+  const budget = max - ellipsis.length;
+  const cut = text.slice(0, budget);
+  const lastNewline = cut.lastIndexOf('\n');
+  const safe = lastNewline > 0 ? cut.slice(0, lastNewline) : cut;
+  return `${safe}${ellipsis}`;
+}
+
+/**
+ * Общая точка отправки карточки объявления — используется во всех
+ * трёх назначениях (основной чат, тематические супергруппы, "Выгодные").
+ *
+ * 21.08.2026: раньше везде был bot.sendMessage с disable_web_page_preview:
+ * false — карточка выглядела прилично только благодаря автоматическому
+ * превью Telegram, который сам подтягивал og:image/og:description со
+ * страницы объявления. Из-за этого текст превью был не наш, а взят с
+ * сайта-источника напрямую — отсюда кривые формулировки вроде "с
+ * Высокие потолки" (Realting особенно этим грешит, но не только он).
+ * У нас уже есть image_url в базе (см. imageUrl во всех 4 scrapers/*.js)
+ * — просто нигде не использовался. Теперь: если image_url есть,
+ * отправляем ФОТО с нашим текстом в caption (полный контроль над
+ * содержимым, никакого чужого og:description). Если фото нет или
+ * Telegram не смог его загрузить (битая ссылка, сайт блокирует
+ * скачивание по прямой ссылке и т.п.) — откатываемся на обычное
+ * текстовое сообщение, и ТОЛЬКО тогда явно выключаем встроенное
+ * превью (disable_web_page_preview: true), чтобы не вернуть тот же
+ * самый баг с чужим текстом в превью-карточке.
+ *
+ * @returns {Promise<{message: import('node-telegram-bot-api').Message, sentAsPhoto: boolean}>}
+ */
+async function sendListingCard(targetChatId, listing, { message, buttons }, extraOpts = {}) {
+  if (listing.image_url) {
+    try {
+      const sent = await bot.sendPhoto(targetChatId, listing.image_url, {
+        caption: trimToCaption(message),
+        reply_markup: { inline_keyboard: buttons },
+        ...extraOpts,
+      });
+      return { message: sent, sentAsPhoto: true };
+    } catch (err) {
+      // Частые причины: Telegram не смог скачать картинку по ссылке
+      // (сайт-источник блокирует прямые запросы не из браузера, ссылка
+      // уже протухла, формат не поддерживается). Не роняем всё
+      // уведомление целиком — просто уходим в текстовый фоллбэк ниже.
+      console.warn(
+        `[sendListingCard] Не удалось отправить фото (${listing.image_url}) для "${listing.title}" — отправляю текстом:`,
+        err.message
+      );
+    }
+  }
+  const sent = await bot.sendMessage(targetChatId, message, {
+    disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: buttons },
+    ...extraOpts,
+  });
+  return { message: sent, sentAsPhoto: false };
+}
+
 export async function notifyNewListing(listing) {
   if (!bot || !chatId) {
     console.warn('Telegram не настроен — пропускаю уведомление');
     return;
   }
 
-  const { message, buttons } = buildMessagePayload(listing);
-
-  await bot.sendMessage(chatId, message, {
-    disable_web_page_preview: false,
-    reply_markup: { inline_keyboard: buttons },
-  });
+  const payload = buildMessagePayload(listing);
+  await sendListingCard(chatId, listing, payload);
 }
 
 // Соответствие property_type (+ deal_type для аренды квартир и
@@ -274,16 +336,32 @@ export async function notifyToTopicGroup(listing) {
   const targetChatId = TOPIC_GROUPS[groupKey];
   if (!bot || !targetChatId) return null;
 
-  const { message, buttons } = buildMessagePayload(listing);
+  const payload = buildMessagePayload(listing);
   const messageThreadId = await getTopicId(groupKey, listing.district);
 
+  // 21.08.2026: самодиагностика — раньше отсутствие темы для района
+  // молча "проглатывалось" (объявление просто уходило в общую тему
+  // группы без единого следа в логах), из-за чего было невозможно
+  // отличить "у объявления не определился район" от "тема для района
+  // не создана в setup-topics.js" не копаясь руками в базе. Логируем
+  // оба случая по отдельности.
+  if (!messageThreadId) {
+    if (!listing.district) {
+      console.warn(
+        `[notifyToTopicGroup] У объявления не определён район — уходит в общую тему группы "${groupKey}": ${listing.url}`
+      );
+    } else {
+      console.warn(
+        `[notifyToTopicGroup] Нет темы "${listing.district}" в группе "${groupKey}" (не запускали setup-topics.js для этого района?) — уходит в общую тему: ${listing.url}`
+      );
+    }
+  }
+
   try {
-    const sent = await bot.sendMessage(targetChatId, message, {
-      disable_web_page_preview: false,
-      reply_markup: { inline_keyboard: buttons },
+    const sent = await sendListingCard(targetChatId, listing, payload, {
       ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
     });
-    return { chatId: String(sent.chat.id), messageId: sent.message_id };
+    return { chatId: String(sent.message.chat.id), messageId: sent.message.message_id };
   } catch (err) {
     console.error(`Не удалось отправить в тематическую супергруппу (${groupKey}):`, err.message);
     return null;
@@ -312,17 +390,15 @@ export async function notifyDeal(listing) {
     return null;
   }
 
-  const { message, buttons } = buildMessagePayload(listing, { includeDealScore: true });
+  const payload = buildMessagePayload(listing, { includeDealScore: true });
   const messageThreadId = await getTopicId('deals', listing.district);
 
   try {
-    const sent = await bot.sendMessage(targetChatId, message, {
-      disable_web_page_preview: false,
-      reply_markup: { inline_keyboard: buttons },
+    const sent = await sendListingCard(targetChatId, listing, payload, {
       ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
     });
     console.log(`[notifyDeal] Отправлено в "Выгодные" (район: ${listing.district || 'неизвестен'}): ${listing.title}`);
-    return { chatId: String(sent.chat.id), messageId: sent.message_id };
+    return { chatId: String(sent.message.chat.id), messageId: sent.message.message_id };
   } catch (err) {
     console.error('Не удалось отправить в супергруппу "Выгодные":', err.message);
     return null;
@@ -366,19 +442,34 @@ export async function deleteTelegramMessage(chatId, messageId) {
 export async function editNotifiedMessageText(listing) {
   if (!bot || !listing?.telegram_chat_id || !listing?.telegram_message_id) return false;
   const { message } = buildMessagePayload(listing);
+  const target = { chat_id: listing.telegram_chat_id, message_id: listing.telegram_message_id };
+
+  const isNotModified = (err) => /message is not modified/i.test(err.message);
+  // "there is no text in the message to edit" — именно так Telegram
+  // отвечает, когда пытаешься editMessageText на сообщении, которое
+  // на самом деле фото с caption (см. sendListingCard выше, теперь
+  // часть сообщений отправляется именно так). Раньше эта функция
+  // всегда знала, что сообщение текстовое — теперь нет, поэтому
+  // пробуем оба варианта редактирования вместо одного.
+  const looksLikePhotoMessage = (err) => /no text in the message|message can't be edited|there is no caption/i.test(err.message);
+
   try {
-    await bot.editMessageText(message, {
-      chat_id: listing.telegram_chat_id,
-      message_id: listing.telegram_message_id,
-    });
+    await bot.editMessageText(message, target);
     return true;
   } catch (err) {
-    // "message is not modified" — Telegram так отвечает, если новый
-    // текст побайтово совпал со старым (например, сегмент определился,
-    // но объявление не below_market — тогда строка с сегментом в тексте
-    // вообще не появляется, текст не изменился). Это не ошибка.
-    if (/message is not modified/i.test(err.message)) return true;
-    console.error(`Не удалось отредактировать сообщение ${listing.telegram_message_id} в чате ${listing.telegram_chat_id}:`, err.message);
+    if (isNotModified(err)) return true;
+    if (!looksLikePhotoMessage(err)) {
+      console.error(`Не удалось отредактировать сообщение ${listing.telegram_message_id} в чате ${listing.telegram_chat_id}:`, err.message);
+      return false;
+    }
+  }
+
+  try {
+    await bot.editMessageCaption(trimToCaption(message), target);
+    return true;
+  } catch (err) {
+    if (isNotModified(err)) return true;
+    console.error(`Не удалось отредактировать caption сообщения ${listing.telegram_message_id} в чате ${listing.telegram_chat_id}:`, err.message);
     return false;
   }
 }

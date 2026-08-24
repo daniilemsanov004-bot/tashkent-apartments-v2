@@ -123,6 +123,68 @@ function DistrictFilter({ selected, onChange }) {
   );
 }
 
+// ---------- Мультивыбор комнат (тот же паттерн, что и DistrictFilter
+// выше — по просьбе Владика 24.08.2026, "как по районам") ----------
+
+const ROOMS_OPTIONS = [
+  { value: '1', label: '1 комната' },
+  { value: '2', label: '2 комнаты' },
+  { value: '3', label: '3 комнаты' },
+  { value: '4', label: '4 комнаты' },
+  { value: '5plus', label: '5+ комнат' },
+];
+
+function RoomsFilter({ selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const toggleRoom = (v) => {
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  };
+
+  const label =
+    selected.length === 0
+      ? 'Любая комнатность'
+      : selected.length === 1
+        ? ROOMS_OPTIONS.find((o) => o.value === selected[0])?.label || selected[0]
+        : `Комнат: ${selected.map((v) => (v === '5plus' ? '5+' : v)).join(', ')}`;
+
+  return (
+    <div className="district-filter" ref={ref}>
+      <button
+        type="button"
+        className={`btn district-toggle ${selected.length ? 'is-active' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="district-menu">
+          {ROOMS_OPTIONS.map((o) => (
+            <label key={o.value} className="district-option">
+              <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggleRoom(o.value)} />
+              {o.label}
+            </label>
+          ))}
+          {selected.length > 0 && (
+            <button type="button" className="btn btn-small district-clear" onClick={() => onChange([])}>
+              Сбросить комнаты
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Карточка объявления ----------
 
 const Card = memo(function Card({ listing, selected, myEmail, onToggleContacted, onToggleSelect, onSaveNote, onAssign }) {
@@ -523,7 +585,11 @@ function Dashboard() {
   const [search, setSearch] = useState('');
   const [dealFilter, setDealFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [roomsFilter, setRoomsFilter] = useState('all');
+  const [roomsFilter, setRoomsFilter] = useState([]);
+  const [areaMinInput, setAreaMinInput] = useState('');
+  const [areaMaxInput, setAreaMaxInput] = useState('');
+  const [areaMin, setAreaMin] = useState('');
+  const [areaMax, setAreaMax] = useState('');
   const [badgeFilter, setBadgeFilter] = useState('all');
   const [contactedFilter, setContactedFilter] = useState('all');
   const [daysRange, setDaysRange] = useState('3');
@@ -566,10 +632,16 @@ function Dashboard() {
 
   // Комнатность не применима к коммерции — если переключились на неё
   // (руками или через ИИ-поиск), снимаем ранее выбранный rooms-фильтр,
-  // а не оставляем его тихо висеть в URL за скрытым селектом.
+  // а не оставляем его тихо висеть в URL за скрытым селектом. И наоборот:
+  // площадь актуальна только для коммерции — сбрасываем её при уходе
+  // с коммерции по той же причине.
   useEffect(() => {
-    if (typeFilter === 'commercial' && roomsFilter !== 'all') setRoomsFilter('all');
-  }, [typeFilter, roomsFilter]);
+    if (typeFilter === 'commercial' && roomsFilter.length > 0) setRoomsFilter([]);
+    if (typeFilter !== 'commercial' && (areaMinInput || areaMaxInput)) {
+      setAreaMinInput('');
+      setAreaMaxInput('');
+    }
+  }, [typeFilter, roomsFilter, areaMinInput, areaMaxInput]);
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -578,6 +650,14 @@ function Dashboard() {
     }, DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [priceMinInput, priceMaxInput]);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setAreaMin(areaMinInput);
+      setAreaMax(areaMaxInput);
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [areaMinInput, areaMaxInput]);
 
   const authFetch = useCallback(
     async (url, options = {}) => {
@@ -649,7 +729,7 @@ function Dashboard() {
       setDistrictFilter(r.district || []);
       setDealFilter(r.deal || 'all');
       setTypeFilter(r.type || 'all');
-      setRoomsFilter(r.rooms != null ? String(r.rooms) : 'all');
+      setRoomsFilter(Array.isArray(r.rooms) ? r.rooms.map(String) : []);
       setBadgeFilter(r.badge || 'all');
       setPriceCurrency(r.currency || 'all');
 
@@ -662,6 +742,13 @@ function Dashboard() {
       setPriceMaxInput(priceMaxStr);
       setPriceMin(priceMinStr);
       setPriceMax(priceMaxStr);
+
+      const areaMinStr = r.areaMin != null ? String(r.areaMin) : '';
+      const areaMaxStr = r.areaMax != null ? String(r.areaMax) : '';
+      setAreaMinInput(areaMinStr);
+      setAreaMaxInput(areaMaxStr);
+      setAreaMin(areaMinStr);
+      setAreaMax(areaMaxStr);
 
       const qStr = r.q || '';
       setSearchInput(qStr);
@@ -682,7 +769,7 @@ function Dashboard() {
     if (search) params.set('q', search);
     if (dealFilter !== 'all') params.set('deal', dealFilter);
     if (typeFilter !== 'all') params.set('type', typeFilter);
-    if (roomsFilter !== 'all') params.set('rooms', roomsFilter);
+    if (roomsFilter.length) params.set('rooms', roomsFilter.join(','));
     if (badgeFilter !== 'all') params.set('badge', badgeFilter);
     if (contactedFilter !== 'all') {
       params.set('contacted', contactedFilter === 'contacted' ? 'yes' : 'no');
@@ -692,10 +779,12 @@ function Dashboard() {
     if (priceCurrency !== 'all') params.set('currency', priceCurrency);
     if (priceMin) params.set('priceMin', priceMin);
     if (priceMax) params.set('priceMax', priceMax);
+    if (typeFilter === 'commercial' && areaMin) params.set('areaMin', areaMin);
+    if (typeFilter === 'commercial' && areaMax) params.set('areaMax', areaMax);
     if (assignedFilter === 'none') params.set('assigned', 'none');
     if (dealsOnly) params.set('deals', 'true');
     return `/api/listings?${params.toString()}`;
-  }, [daysRange, search, dealFilter, typeFilter, roomsFilter, badgeFilter, contactedFilter, districtFilter, sortBy, priceCurrency, priceMin, priceMax, assignedFilter, dealsOnly]);
+  }, [daysRange, search, dealFilter, typeFilter, roomsFilter, badgeFilter, contactedFilter, districtFilter, sortBy, priceCurrency, priceMin, priceMax, areaMin, areaMax, assignedFilter, dealsOnly]);
 
   const fetchStats = useCallback(async () => {
     const res = await authFetch(`/api/stats?days=${daysRange}`);
@@ -884,7 +973,7 @@ function Dashboard() {
     setSearch('');
     setDealFilter('all');
     setTypeFilter('all');
-    setRoomsFilter('all');
+    setRoomsFilter([]);
     setBadgeFilter('all');
     setContactedFilter('all');
     setDistrictFilter([]);
@@ -894,13 +983,17 @@ function Dashboard() {
     setPriceMaxInput('');
     setPriceMin('');
     setPriceMax('');
+    setAreaMinInput('');
+    setAreaMaxInput('');
+    setAreaMin('');
+    setAreaMax('');
     setAssignedFilter('all');
   }, []);
 
   const filtersActive =
-    search || dealFilter !== 'all' || typeFilter !== 'all' || roomsFilter !== 'all' || badgeFilter !== 'all' ||
+    search || dealFilter !== 'all' || typeFilter !== 'all' || roomsFilter.length > 0 || badgeFilter !== 'all' ||
     contactedFilter !== 'all' || districtFilter.length > 0 || sortBy !== 'new' ||
-    priceCurrency !== 'all' || priceMin || priceMax || assignedFilter !== 'all';
+    priceCurrency !== 'all' || priceMin || priceMax || areaMin || areaMax || assignedFilter !== 'all';
 
   // ---- Экраны в зависимости от состояния авторизации ----
 
@@ -1006,16 +1099,7 @@ function Dashboard() {
             <option value="house">Дома</option>
             <option value="commercial">Коммерция</option>
           </select>
-          {typeFilter !== 'commercial' && (
-            <select value={roomsFilter} onChange={(e) => setRoomsFilter(e.target.value)}>
-              <option value="all">Любая комнатность</option>
-              <option value="1">1 комната</option>
-              <option value="2">2 комнаты</option>
-              <option value="3">3 комнаты</option>
-              <option value="4">4 комнаты</option>
-              <option value="5plus">5+ комнат</option>
-            </select>
-          )}
+          {typeFilter !== 'commercial' && <RoomsFilter selected={roomsFilter} onChange={setRoomsFilter} />}
           <select value={badgeFilter} onChange={(e) => setBadgeFilter(e.target.value)}>
             <option value="all">Все объявления</option>
             <option value="owner">Только собственники</option>
@@ -1062,6 +1146,26 @@ function Dashboard() {
             value={priceMaxInput}
             onChange={(e) => setPriceMaxInput(e.target.value)}
           />
+          {typeFilter === 'commercial' && (
+            <>
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="Площадь от, м²"
+                className="price-input"
+                value={areaMinInput}
+                onChange={(e) => setAreaMinInput(e.target.value)}
+              />
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="Площадь до, м²"
+                className="price-input"
+                value={areaMaxInput}
+                onChange={(e) => setAreaMaxInput(e.target.value)}
+              />
+            </>
+          )}
           {filtersActive && (
             <button className="btn" onClick={resetFilters}>Сбросить фильтры</button>
           )}

@@ -219,12 +219,19 @@ export async function fetchDomtutDetails(url) {
     const isOrganization = Boolean(
       DEVELOPER_RE.test(rawText) || LEGAL_ENTITY_RE.test(rawText) || findAgentTextSignal(rawText)
     );
+    // 21.08.2026: Domtut был единственным из 4 источников, у которого
+    // вообще не извлекалась картинка (og:image) — все объявления
+    // Domtut уходили в Telegram без image_url, а значит теперь (см.
+    // sendListingCard в telegram.js) всегда падают в текстовый
+    // фоллбэк, даже когда у объявления реально есть фото на сайте.
+    const imageUrl = $('meta[property="og:image"]').attr('content') || null;
     return {
       description,
       sellerName,
       sellerListingsUrl: null,
       sellerIsOrganization: isOrganization,
       sellerNameLooksLikeAgent: isOrganization,
+      imageUrl,
       marketSegment: detectMarketSegment(rawText) || 'new_build',
     };
   } catch (err) {
@@ -235,6 +242,7 @@ export async function fetchDomtutDetails(url) {
       sellerListingsUrl: null,
       sellerIsOrganization: false,
       sellerNameLooksLikeAgent: false,
+      imageUrl: null,
       marketSegment: 'new_build',
     };
   }

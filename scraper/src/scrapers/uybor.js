@@ -255,13 +255,56 @@ function extractUyborImage(item) {
 }
 
 /**
- * Данные объявления уже приходят из /listings (поиска) почти полностью,
- * так что отдельный запрос за деталями обычно не нужен. Возвращаем
- * пустую строку — classify.js получит raw_text просто из title.
- * Если понадобится полное описание — можно дозапросить
- * GET https://api.uybor.uz/api/v1/listings/{id}, но сначала проверим,
- * хватает ли данных из поиска.
+ * Раньше отдельный запрос за деталями не делался вообще (детали не
+ * подтягивались, raw_text = только title) — из-за этого у Uybor не
+ * было ни полноценной классификации собственник/агент по тексту, ни
+ * материала для текстового поиска (жалоба пользователя 24.08.2026:
+ * "чтобы иишка тоже могла искать по описаниям" — а описания на Uybor
+ * попросту нигде не лежали). Теперь дозапрашиваем
+ * GET /api/v1/listings/{id} — тот же JSON API, что и список, просто
+ * по одному объявлению.
+ *
+ * ВАЖНО: формат ответа этой конкретной ручки НЕ подтверждён вживую
+ * (в отличие от /listings — см. debug-лог там от 11.08.2026). Логируем
+ * сырой ответ ПЕРВОГО запроса за прогон (loggedSample) — по нему после
+ * деплоя нужно свериться в логах GitHub Actions, что description
+ * реально достаётся, и поправить поле, если название другое.
  */
-export async function fetchUyborDetails() {
-  return { description: '', sellerName: null, sellerListingsUrl: null };
+let loggedSample = false;
+
+export async function fetchUyborDetails(url) {
+  const idMatch = String(url || '').match(/\/listings\/(\d+)/);
+  const id = idMatch ? idMatch[1] : null;
+  if (!id) return { description: '', sellerName: null, sellerListingsUrl: null };
+
+  try {
+    const { data } = await getWithRetry(
+      `${UYBOR_API}/${id}`,
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+        timeout: 15000,
+      },
+      3
+    );
+
+    const item = data?.data || data;
+    if (!loggedSample) {
+      loggedSample = true;
+      console.log(`[uybor-details] сырой ответ /listings/${id}:`, JSON.stringify(item).slice(0, 1500));
+    }
+
+    // Поле описания не подтверждено — пробуем несколько вероятных
+    // названий (описание у Uybor, как и title, скорее всего
+    // локализованный объект {ru,uz,"uz-latn"} — см. localized() выше).
+    const description = localized(item?.description) || localized(item?.text) || localized(item?.body) || '';
+
+    const { isAgent: sellerNameLooksLikeAgent } = item?.user ? detectAgentRole(item) : { isAgent: false };
+    const orgName = localized(item?.user?.organization?.name) || localized(item?.user?.organization?.title) || null;
+    const sellerName = orgName || item?.user?.name || item?.user?.fullName || null;
+
+    return { description, sellerName, sellerListingsUrl: null, sellerNameLooksLikeAgent };
+  } catch (err) {
+    console.warn(`[uybor] не удалось получить детали объявления ${id}:`, err.message);
+    return { description: '', sellerName: null, sellerListingsUrl: null };
+  }
 }

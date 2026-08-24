@@ -148,16 +148,16 @@ function districtKeyboard(selected) {
   return rows;
 }
 
-function roomsKeyboard() {
+function roomsKeyboard(selected) {
+  const row1 = ['1', '2', '3', '4'].map((n) => {
+    const mark = selected.includes(n) ? '✅ ' : '';
+    return { text: `${mark}${n}`, callback_data: `r:${n}` };
+  });
+  const mark5 = selected.includes('5plus') ? '✅ ' : '';
   return [
-    [
-      { text: '1', callback_data: 'r:1' },
-      { text: '2', callback_data: 'r:2' },
-      { text: '3', callback_data: 'r:3' },
-      { text: '4', callback_data: 'r:4' },
-      { text: '5+', callback_data: 'r:5plus' },
-    ],
-    [{ text: '🤷 Неважно', callback_data: 'r:any' }],
+    row1,
+    [{ text: `${mark5}5+`, callback_data: 'r:5plus' }],
+    [{ text: '🤷 Неважно', callback_data: 'r:any' }, { text: '➡️ Далее', callback_data: 'r:done' }],
   ];
 }
 
@@ -168,13 +168,22 @@ function priceKeyboard() {
 const PRICE_STEP_TEXT =
   'Диапазон цены?\n\nОтветьте (Reply) на это сообщение, например: <code>300-800 млн</code>, <code>от 2 млрд</code>, <code>500-1500$</code> — или нажмите кнопку ниже, если цена неважна.';
 
-// Для коммерции шаг "Сколько комнат?" не имеет смысла (офис/склад/
-// магазин считаются не комнатами, а площадью) — пропускаем его сразу
-// на цену, вместо того чтобы предлагать заведомо нерелевантный выбор.
+const AREA_STEP_TEXT =
+  'Площадь, м²?\n\nОтветьте (Reply) на это сообщение, например: <code>50-100</code>, <code>от 200</code> — или нажмите кнопку ниже, если площадь неважна.';
+
+function areaKeyboard() {
+  return [[{ text: '📐 Без ограничений по площади', callback_data: 'a:any' }]];
+}
+
+// Комнатность не применима к коммерции (офис/склад/магазин — это
+// площадь, а не комнаты, по просьбе Владика 24.08.2026), поэтому для
+// неё пропускаем шаг "Сколько комнат?" и вместо этого спрашиваем
+// площадь — а для квартир/домов, наоборот, площадь пока не спрашиваем
+// (она не так критична при поиске квартиры, комнатность важнее).
 function goToRoomsOrPriceStep(session, filters) {
   if (filters.propertyType === 'commercial') {
-    filters.rooms = 'any';
-    session.step = 'price';
+    filters.rooms = [];
+    session.step = 'area';
   } else {
     session.step = 'rooms';
   }
@@ -182,9 +191,11 @@ function goToRoomsOrPriceStep(session, filters) {
 
 function sendRoomsOrPriceMessage(chatId, messageId, filters) {
   if (filters.propertyType === 'commercial') {
-    return editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
+    return editMessageText(chatId, messageId, AREA_STEP_TEXT, { reply_markup: { inline_keyboard: areaKeyboard() } });
   }
-  return editMessageText(chatId, messageId, 'Сколько комнат?', { reply_markup: { inline_keyboard: roomsKeyboard() } });
+  return editMessageText(chatId, messageId, 'Сколько комнат? (можно выбрать несколько)', {
+    reply_markup: { inline_keyboard: roomsKeyboard(filters.rooms) },
+  });
 }
 
 function resultsKeyboard(hasMore, hasPrev) {
@@ -287,9 +298,8 @@ const DEAL_LABEL = { rent: '🔑 Аренда', sale: '🏷️ Продажа' }
 const PROPERTY_LABEL = { apartment: '🏢 Квартиры', house: '🏡 Дома', commercial: '🏬 Коммерция', any: 'любой тип' };
 
 function roomsLabel(rooms) {
-  if (!rooms || rooms === 'any') return 'неважно';
-  if (rooms === '5plus') return '5+';
-  return String(rooms);
+  if (!rooms || !rooms.length) return 'неважно';
+  return rooms.map((r) => (r === '5plus' ? '5+' : String(r))).join(', ');
 }
 
 function filtersSummary(filters) {
@@ -298,7 +308,14 @@ function filtersSummary(filters) {
     PROPERTY_LABEL[filters.propertyType] || '',
     filters.districts?.length ? filters.districts.join(', ') : 'любой район',
   ];
-  if (filters.propertyType !== 'commercial') {
+  if (filters.propertyType === 'commercial') {
+    if (filters.areaRange) {
+      const { min, max } = filters.areaRange;
+      if (min && max) parts.push(`площадь: ${min}–${max} м²`);
+      else if (min) parts.push(`площадь: от ${min} м²`);
+      else if (max) parts.push(`площадь: до ${max} м²`);
+    }
+  } else {
     parts.push(`комнат: ${roomsLabel(filters.rooms)}`);
   }
   if (filters.priceRange) {
@@ -346,9 +363,21 @@ async function runSearch(filters) {
   if (filters.dealType) query = query.eq('deal_type', filters.dealType);
   if (filters.propertyType && filters.propertyType !== 'any') query = query.eq('property_type', filters.propertyType);
   if (filters.districts?.length) query = query.in('district', filters.districts);
-  if (filters.rooms && filters.rooms !== 'any') {
-    if (filters.rooms === '5plus') query = query.gte('rooms', 5);
-    else query = query.eq('rooms', Number(filters.rooms));
+  // filters.rooms теперь массив (можно искать сразу "2 и 3 комнаты",
+  // как и раньше можно было выбрать сразу несколько районов) — по
+  // просьбе Владика 24.08.2026. Supabase не даёт напрямую смешать
+  // .in() и .gte() одним вызовом на одну колонку, поэтому при наличии
+  // "5plus" вместе с обычными числами собираем OR-условие вручную.
+  if (filters.rooms?.length) {
+    const numeric = filters.rooms.filter((r) => r !== '5plus').map(Number);
+    const has5plus = filters.rooms.includes('5plus');
+    if (has5plus && numeric.length) {
+      query = query.or(`rooms.in.(${numeric.join(',')}),rooms.gte.5`);
+    } else if (has5plus) {
+      query = query.gte('rooms', 5);
+    } else if (numeric.length) {
+      query = query.in('rooms', numeric);
+    }
   }
 
   const cutoff = new Date(Date.now() - SEARCH_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -370,6 +399,20 @@ async function runSearch(filters) {
       if (priceUzs === null) return false; // без цены — не знаем, попадает ли в диапазон
       if (minUzs !== null && priceUzs < minUzs) return false;
       if (maxUzs !== null && priceUzs > maxUzs) return false;
+      return true;
+    });
+  }
+
+  // Площадь — по просьбе Владика 24.08.2026: для коммерции комнат нет,
+  // но площадь как раз то, по чему там реально фильтруют. Та же логика,
+  // что и с ценой: без площади в объявлении — не знаем, попадает ли в
+  // диапазон, лучше отбросить, чем показать заведомо нерелевантное.
+  if (filters.areaRange) {
+    const { min, max } = filters.areaRange;
+    results = results.filter((l) => {
+      if (l.area == null) return false;
+      if (min != null && l.area < min) return false;
+      if (max != null && l.area > max) return false;
       return true;
     });
   }
@@ -429,7 +472,7 @@ async function startWizard(chatId, userId, existingMessageId, threadId) {
   await saveSession(chatId, userId, {
     step: 'deal_type',
     menuMessageId: messageId,
-    filters: { districts: [] },
+    filters: { districts: [], rooms: [] },
   });
 }
 
@@ -509,7 +552,25 @@ async function handleCallback(update) {
       });
     }
   } else if (data.startsWith('r:')) {
-    filters.rooms = data.slice(2);
+    const val = data.slice(2);
+    if (val === 'any') {
+      filters.rooms = [];
+      session.step = 'price';
+      await editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
+    } else if (val === 'done') {
+      session.step = 'price';
+      await editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
+    } else {
+      filters.rooms = filters.rooms || [];
+      const idx = filters.rooms.indexOf(val);
+      if (idx === -1) filters.rooms.push(val);
+      else filters.rooms.splice(idx, 1);
+      await editMessageText(chatId, messageId, 'Сколько комнат? (можно выбрать несколько)', {
+        reply_markup: { inline_keyboard: roomsKeyboard(filters.rooms) },
+      });
+    }
+  } else if (data === 'a:any') {
+    filters.areaRange = null;
     session.step = 'price';
     await editMessageText(chatId, messageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
   } else if (data === 'p:any') {
@@ -530,14 +591,71 @@ async function handleCallback(update) {
   await saveSession(chatId, userId, session);
 }
 
+// Простой парсер диапазона площади (м²) — без валюты/множителей
+// ("млн"/"сум"), в отличие от parsePriceRange. Тот же порядок
+// попыток: "50-100", "от 200", "до 80", просто "60" (трактуем как
+// потолок, чтобы не отсекать чуть меньшие варианты).
+function parseAreaRange(text) {
+  if (!text) return null;
+  const raw = String(text).trim().replace(',', '.');
+  const rangeMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:-|–|—|до)\s*(\d+(?:\.\d+)?)/i);
+  if (rangeMatch) return { min: parseFloat(rangeMatch[1]), max: parseFloat(rangeMatch[2]) };
+  const fromMatch = raw.match(/от\s*(\d+(?:\.\d+)?)/i);
+  if (fromMatch) return { min: parseFloat(fromMatch[1]), max: null };
+  const toMatch = raw.match(/до\s*(\d+(?:\.\d+)?)/i);
+  if (toMatch) return { min: null, max: parseFloat(toMatch[1]) };
+  const single = raw.match(/(\d+(?:\.\d+)?)/);
+  if (single) return { min: null, max: parseFloat(single[1]) };
+  return null;
+}
+
+async function handleAreaTextReply(message) {
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+  const session = await getSession(chatId, userId);
+  if (!session || session.step !== 'area') return false;
+
+  const parsed = parseAreaRange(message.text);
+  if (!parsed) {
+    await sendMessage(
+      chatId,
+      '🤔 Не понял площадь. Попробуйте, например: <code>50-100</code> или <code>от 200</code>.',
+      threadExtra(message.message_thread_id)
+    );
+    return true;
+  }
+
+  session.filters.areaRange = parsed;
+  session.step = 'price';
+  await editMessageText(chatId, session.menuMessageId, PRICE_STEP_TEXT, { reply_markup: { inline_keyboard: priceKeyboard() } });
+  await saveSession(chatId, userId, session);
+  return true;
+}
+
 async function handlePriceTextReply(message) {
   const chatId = message.chat.id;
   const userId = message.from.id;
   const session = await getSession(chatId, userId);
-  if (!session || session.step !== 'price') return false; // не наш случай, игнорируем
+  if (!session) return false;
+
+  // Раньше это работало ТОЛЬКО сразу после шага "Диапазон цены?"
+  // (session.step === 'price') — если человек уже увидел результаты
+  // и решил просто прислать новый диапазон ответом на них (не
+  // перезапуская весь /find с нуля), ничего не происходило (жалоба
+  // Владика 24.08.2026: "100000$-100000$" в реплае к результатам
+  // тихо игнорировался). Теперь это работает и после результатов —
+  // но ТОЛЬКО если текст реально похож на диапазон цены: на шаге
+  // 'price' мы явно его ждём (и переспрашиваем, если не поняли), а
+  // на шаге 'results' — если текст не распознан как цена, просто
+  // молча выходим, чтобы не превращать любой случайный реплай на
+  // карточку в "🤔 Не понял диапазон".
+  const atPriceStep = session.step === 'price';
+  const atResultsStep = session.step === 'results';
+  if (!atPriceStep && !atResultsStep) return false;
 
   const parsed = parsePriceRange(message.text);
   if (!parsed) {
+    if (!atPriceStep) return false;
     await sendMessage(
       chatId,
       '🤔 Не понял диапазон. Попробуйте, например: <code>300-800 млн</code> или <code>от 500$</code>.',
@@ -621,18 +739,25 @@ async function handleAiSearch(chatId, userId, queryText, threadId) {
     dealType: f.deal || null,
     propertyType: f.type || 'any',
     districts: f.district || [],
-    rooms: f.rooms != null ? f.rooms : 'any', // теперь _aiSearch.js извлекает комнатность отдельным полем (rooms), runSearch уже умеет фильтровать по нему (см. выше, filters.rooms)
+    rooms: f.rooms || [], // теперь массив, как и district — можно сразу "2-3 комнаты" (см. _aiSearch.js)
+    areaRange: f.areaMin != null || f.areaMax != null ? { min: f.areaMin, max: f.areaMax } : null,
     priceRange,
   };
 
   let results = await runSearch(filters);
 
   // f.q — то, что ИИ не смог разложить по полям (например конкретный
-  // ЖК, "3-комнатная", пожелание по ремонту) — фильтруем ДОПОЛНИТЕЛЬНО
-  // текстовым совпадением по заголовку, как и обычный поиск на сайте.
+  // ЖК, "с ремонтом", пожелание по инфраструктуре) — фильтруем
+  // ДОПОЛНИТЕЛЬНО текстовым совпадением. Раньше проверялся только
+  // title — а такие детали почти всегда пишут в ОПИСАНИИ, а не в
+  // заголовке (жалоба пользователя 24.08.2026: "чтобы иишка тоже
+  // могла искать по описаниям"). runSearch делает select('*'), так
+  // что raw_text (title+описание, см. run.js) уже есть в каждой
+  // записи — используем его, как и обычный поиск на сайте
+  // (client/api/listings.js: title/district/raw_text через ilike).
   if (f.q) {
     const needle = f.q.toLowerCase();
-    results = results.filter((l) => (l.title || '').toLowerCase().includes(needle));
+    results = results.filter((l) => (l.raw_text || l.title || '').toLowerCase().includes(needle));
   }
 
   const state = { filters, results, offset: 0 };
@@ -746,6 +871,7 @@ async function handleMessage(message) {
     return;
   }
   if (message.text && !cmd) {
+    if (await handleAreaTextReply(message)) return;
     await handlePriceTextReply(message);
   }
 }
@@ -775,6 +901,26 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error('Ошибка обработки Telegram-апдейта:', err);
+    // Раньше ошибка тут просто уходила в серверный лог, а пользователь
+    // не получал вообще никакой реакции — снаружи выглядело как "бот
+    // завис" (жалоба 20.08.2026: после ввода диапазона цены в /find
+    // тишина). Теперь дополнительно пытаемся сообщить об этом в чат.
+    // best-effort и в своём try/catch: если сама отправка тоже упадёт
+    // (например Telegram недоступен), не роняем обработку апдейта
+    // второй раз — Telegram всё равно должен получить 200 OK ниже.
+    const chatId = update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id;
+    const threadId = update?.message?.message_thread_id ?? update?.callback_query?.message?.message_thread_id;
+    if (chatId) {
+      try {
+        await sendMessage(
+          chatId,
+          '⚠️ Что-то пошло не так при обработке запроса. Попробуйте ещё раз или начните заново: /find',
+          threadExtra(threadId)
+        );
+      } catch (sendErr) {
+        console.error('Не удалось отправить сообщение об ошибке:', sendErr);
+      }
+    }
   }
 
   // Telegram ждёт 200 OK независимо от результата обработки — иначе

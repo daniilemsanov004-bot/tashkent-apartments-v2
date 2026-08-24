@@ -105,12 +105,30 @@ export default async function handler(req, res) {
   // сайта (столбец в базе есть, но фильтра не было ни в ручных
   // фильтрах, ни в ИИ-поиске — см. _aiSearch.js) — теперь ИИ-поиск
   // умеет извлекать rooms из текста, и он должен куда-то применяться.
-  if (req.query.rooms === '5plus') {
-    query = query.gte('rooms', 5);
-  } else if (req.query.rooms) {
-    const roomsNum = Number(req.query.rooms);
-    if (Number.isFinite(roomsNum)) query = query.eq('rooms', roomsNum);
+  // По просьбе Владика (24.08.2026): комнатность, как и район, можно
+  // выбрать сразу несколько ("2-3 комнаты") — req.query.rooms теперь
+  // список через запятую ("2,3" или "2,3,5plus"), а не одно значение.
+  if (req.query.rooms) {
+    const roomsList = req.query.rooms.split(',').map((r) => r.trim()).filter(Boolean);
+    const numeric = roomsList.filter((r) => r !== '5plus').map(Number).filter(Number.isFinite);
+    const has5plus = roomsList.includes('5plus');
+    if (has5plus && numeric.length) {
+      query = query.or(`rooms.in.(${numeric.join(',')}),rooms.gte.5`);
+    } else if (has5plus) {
+      query = query.gte('rooms', 5);
+    } else if (numeric.length) {
+      query = query.in('rooms', numeric);
+    }
   }
+
+  // Площадь — актуальна для коммерции (офис/склад/магазин меряют
+  // метрами, не комнатами). area — обычный числовой столбец, без
+  // валют/пересчётов, поэтому фильтруем прямо в SQL, в отличие от
+  // цены.
+  const areaMin = Number(req.query.areaMin);
+  const areaMax = Number(req.query.areaMax);
+  if (req.query.areaMin && Number.isFinite(areaMin)) query = query.gte('area', areaMin);
+  if (req.query.areaMax && Number.isFinite(areaMax)) query = query.lte('area', areaMax);
 
   // Цена: price_value — просто число без учёта валюты, поэтому
   // диапазон имеет смысл только вместе с выбранной валютой (иначе

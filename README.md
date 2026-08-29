@@ -1,276 +1,94 @@
-# Квартиры Ташкент — поиск объявлений от собственников
+<div align="center">
 
-Находит новые объявления о недвижимости (аренда + продажа, квартиры/дома/
-коммерция) на **OLX.uz**, **Uybor.uz**, **Realting.uz**, **Domtut.uz** и
-частично **Joymee.uz**, отсеивает агентства, показывает объявления на сайте
-и рассылает их в Telegram по темам/группам. Дополнительно считает
-рыночную статистику по районам и подсвечивает объявления с ценой заметно
-ниже рынка.
+# Tashkent Apartments
 
-## Что уже реализовано
+### Real Estate Search & Deal Discovery Platform
 
-1. **Сайт** (React + Supabase) — лента объявлений, фильтры, авторизация по
-   email (без пароля), статус «связались», управление командой/ролями,
-   ИИ-поиск по объявлениям на естественном языке (`client/api/_aiSearch.js`).
-2. **Скрапер** — 5 источников (OLX.uz, Uybor.uz, Realting.uz, Domtut.uz;
-   Joymee.uz пока только продажа квартир, остальные категории на Joymee не
-   подтверждены), работает по расписанию, пишет в Supabase, шлёт уведомления
-   в Telegram.
-3. **Интерактивный бот в Telegram** (`client/api/telegram-webhook.js`) —
-   `/start` или `/find` запускает мастер из кнопок: тип сделки → тип
-   недвижимости → район (можно несколько) → комнаты → цена → результаты с
-   пагинацией «Ещё». Есть и `/search` — ИИ-поиск по свободному запросу.
-   Настройка — см. подробный комментарий в начале `telegram-webhook.js`
-   (нужно один раз добавить `TELEGRAM_WEBHOOK_SECRET` в Vercel и
-   зарегистрировать webhook).
-4. **Определение «собственник vs агент» — без ИИ**, только жёсткие
-   бесплатные правила (см. раздел ниже). ИИ-классификация
-   (`scraper/src/classify.js`, ветка `USE_AI_CLASSIFICATION`) в коде
-   осталась, но жёстко выключена константой в `run.js` — Anthropic API для
-   этого больше не вызывается, даже если в GitHub Secrets случайно остался
-   `USE_AI_CLASSIFICATION=true`.
-5. **ИИ-извлечение полей объявления** (`scraper/src/extractListingInfo.js`)
-   — отдельная от классификации функция: там, где обычный regex путается
-   (площадь дома vs участка, ремонт, юридические риски, новостройка/вторичка),
-   текст объявления отправляется в цепочку бесплатных LLM-провайдеров:
-   **Gemini → Groq → OpenRouter → Mistral → SambaNova → Cloudflare Workers
-   AI** (используется, только если `AI_FALLBACK_ENABLED=true` и заданы
-   соответствующие ключи; без ключей — тихий откат на regex-парсер, ничего
-   не ломается).
-6. **Рыночная статистика и «выгодные» объявления** (`scraper/src/marketStats.js`,
-   `dealScoring.js`) — медианная цена за м² по группам «тип недвижимости +
-   тип сделки + район», без ИИ, чистая статистика. Объявления с ценой
-   заметно (≥15%) ниже медианы помечаются как «ниже рынка» и дополнительно
-   дублируются в отдельную Telegram-группу «Выгодные»
-   (`TELEGRAM_GROUP_DEALS`). Также отслеживается история изменения цены по
-   объявлению (`price_history`) и считается `deal_score`/`owner_score`.
-7. **Telegram-уведомления по темам** — вместо одного общего чата объявления
-   расходятся по нескольким супергруппам с «Темами» (Topics), разбитым по
-   типу недвижимости/сделки (`TELEGRAM_GROUP_APARTMENT`,
-   `TELEGRAM_GROUP_APARTMENT_RENT`, `TELEGRAM_GROUP_COMMERCIAL`,
-   `TELEGRAM_GROUP_COMMERCIAL_RENT`, `TELEGRAM_GROUP_HOUSE`,
-   `TELEGRAM_GROUP_DEALS`) плюс отдельно `TELEGRAM_ADMIN_CHAT_ID` — личный
-   чат, куда идут только служебные алерты о сбоях парсера (не смешиваются с
-   объявлениями). Темы по районам внутри групп создаются скриптом
-   `scraper/src/setup-topics.js`.
-8. **Защита от зависаний и дублей прогонов.** Встроенное расписание GitHub
-   Actions убрано (оно может опаздывать на часы) — прогон теперь запускает
-   внешний бесплатный cron-сервис (**cron-job.org**), дёргая
-   `workflow_dispatch` каждые ~15 минут. В `scrape.yml` настроена
-   concurrency-группа (`cancel-in-progress: false`) — следующий триггер
-   встаёт в очередь, а не запускается поверх зависшего прогона и не
-   обрывает почти завершённый; таймаут прогона — 20 минут. Внутри
-   `run.js` есть circuit breaker: если источник начинает блокировать
-   подряд несколько запросов деталей объявления, оставшиеся объявления
-   этого источника в этом прогоне пропускаются (попробуются заново через
-   15 минут), вместо того чтобы жечь время на заведомо обречённые retry.
-   Отдельный circuit breaker есть и для получения телефона с OLX.
+Finds new real estate listings from property owners in Tashkent, filters out agencies, analyzes market prices and delivers relevant listings to Telegram.
 
-## Архитектура
+**React · JavaScript · Supabase · Telegram Bot · Web Scraping · AI**
 
-```
-cron-job.org (внешний, каждые ~15 мин)
-    └─ триггерит workflow_dispatch в GitHub Actions
-         └─ scraper/  — парсит сайты, пишет в Supabase, шлёт в Telegram
+</div>
 
-Supabase — база данных (Postgres), общая для скрапера и сайта
+---
 
-Vercel — хостинг сайта
-    └─ client/         — React-интерфейс (лента, фильтры, ИИ-поиск)
-    └─ client/api/     — serverless-функции (данные из Supabase, Telegram-вебхук)
-```
+## Overview
 
-Ничего не должно быть постоянно включено на вашем компьютере — все сервисы
-работают в облаке, на бесплатных тарифах. Есть и альтернативный вариант —
-постоянный VPS вместо связки GitHub Actions + cron-job.org, см. раздел
-«Переезд на VPS» ниже (файлы для него уже готовы в `deploy/`).
+**Tashkent Apartments** is a real estate aggregation and analysis platform focused on finding property listings from owners in Tashkent.
 
-## Настройка — по порядку
+The system collects listings for **rent and sale** from:
 
-### 1. Supabase (база данных)
+- OLX.uz
+- Uybor.uz
+- Realting.uz
+- Domtut.uz
+- Joymee.uz
 
-1. Зарегистрироваться на **supabase.com**, создать новый проект.
-2. **SQL Editor** → New query → сначала `supabase/schema.sql`, затем по
-   очереди все файлы `supabase/01_...sql` → `15_...sql` (в порядке номеров
-   — см. `supabase/README.md`) → **Run** на каждом.
-3. **Project Settings → API** — скопировать:
-   - `Project URL` → это `SUPABASE_URL`
-   - `service_role` ключ (НЕ `anon`!) → это `SUPABASE_SERVICE_KEY`
+It filters out real estate agencies, stores listings in Supabase, displays them through a React web application and sends notifications to Telegram.
 
-⚠️ `service_role` даёт полный доступ к базе без ограничений — держите его
-только в GitHub Secrets и Vercel Environment Variables, никогда не
-коммитьте в код и не используйте во фронтенд-коде напрямую.
+The platform also calculates market statistics and highlights listings that are significantly below the average market price.
 
-### 2. Telegram
+---
 
-1. **@BotFather** → `/newbot` → получить `TELEGRAM_BOT_TOKEN`.
-2. **@userinfobot** → `/start` → получить свой `TELEGRAM_CHAT_ID`
-   (используется и как личный `TELEGRAM_ADMIN_CHAT_ID` для алертов).
-3. Написать `/start` своему новому боту (иначе он не сможет писать вам
-   первым).
-4. По желанию — создать супергруппы с включёнными «Темами» под каждую
-   категорию (`TELEGRAM_GROUP_APARTMENT`, `TELEGRAM_GROUP_APARTMENT_RENT`,
-   `TELEGRAM_GROUP_COMMERCIAL`, `TELEGRAM_GROUP_COMMERCIAL_RENT`,
-   `TELEGRAM_GROUP_HOUSE`, `TELEGRAM_GROUP_DEALS`), добавить бота админом с
-   правом «Управление темами», узнать `chat_id` каждой (через `getUpdates`
-   после любого сообщения в группе). Не обязательно — что не заполнено,
-   просто не используется, объявления по умолчанию продолжают идти в
-   `TELEGRAM_CHAT_ID`.
+## Features
 
-### 3. Локальный тест скрапера (по желанию)
+### Real Estate Scraper
 
-```bash
-cd scraper
-npm install
-cp .env.example .env
-# вписать как минимум: SUPABASE_URL, SUPABASE_SERVICE_KEY,
-# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-npm start
-```
+- 5 supported sources
+- Apartments, houses and commercial properties
+- Sale and rental listings
+- Scheduled scraping
+- Duplicate protection
+- Price history tracking
+- Telegram notifications
+- Source-specific error handling
+- Circuit breakers for blocked or failing endpoints
 
-Полный список переменных с пояснениями — в `scraper/.env.example`
-(AI-провайдеры, группы Telegram, включение/отключение источников, курс
-доллара и т.д.).
+### Owner vs Agency Detection
 
-### 4. GitHub — чтобы скрапер работал сам по расписанию
+Agency detection works without AI and uses deterministic rules:
 
-1. Залить проект в свой репозиторий на GitHub.
-2. **Settings → Secrets and variables → Actions** — добавить секреты по
-   списку из `scraper/.env.example` (как минимум `SUPABASE_URL`,
-   `SUPABASE_SERVICE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`;
-   остальные — по необходимости).
-3. Workflow уже лежит в `.github/workflows/scrape.yml`, но триггерится
-   **только** вручную/по внешнему запросу (`workflow_dispatch`) — сам по
-   расписанию GitHub его не запускает. Настроить внешний планировщик:
-   зарегистрироваться на **cron-job.org**, создать задачу с интервалом
-   ~15 минут, которая дёргает GitHub API
-   (`POST /repos/<owner>/<repo>/actions/workflows/scrape.yml/dispatches`)
-   с личным токеном GitHub в заголовке.
-4. Проверить вручную: вкладка **Actions** → workflow «Scrape apartments» →
-   **Run workflow**.
+- Multiple property listings from the same seller
+- Reused phone numbers across different listings
+- Seller accounts identified as organizations or realtors
+- Source-specific owner indicators
 
-### 5. Vercel — сайт
+Listings that cannot be confidently classified are marked as:
 
-1. Зарегистрироваться на **vercel.com**, **Add New → Project**, подключить
-   тот же GitHub-репозиторий.
-2. **Root Directory** — указать `client` (важно!).
-3. **Environment Variables** — добавить переменные по списку из
-   `client/.env.example` (минимум `VITE_SUPABASE_URL`,
-   `VITE_SUPABASE_ANON_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`).
-4. **Deploy**. Vercel даст ссылку вида
-   `https://tashkent-apartments-xxxx.vercel.app`.
+> Probably an owner
 
-Дальше при каждом пуше в GitHub Vercel будет пересобирать сайт
-автоматически.
+They are not hidden in order to avoid losing legitimate owner listings.
 
-## Локальная разработка интерфейса
+---
 
-```bash
-cd client
-npm install
-npm run dev
-```
+## AI Features
 
-Откроет **http://localhost:5173** — но `/api/*` не заработает без
-`vercel dev`, так что ленту вы не увидите — зато удобно для правки
-вёрстки/стилей.
+AI is used only where it provides a practical advantage.
 
-Чтобы протестировать с реально работающим API локально:
+### AI Listing Extraction
 
-```bash
-npm install -g vercel
-cd client
-vercel dev
-```
+AI can extract structured information from listing descriptions when regular parsing cannot reliably identify it.
 
-Либо из корня репозитория: `npm run install:all` установит зависимости в
-`client/` и `scraper/`, а `npm run dev` запустит клиент и скрапер
-параллельно (см. корневой `package.json`).
+Examples:
 
-## Логика «собственник / агент»
+- Property area
+- Land area
+- Renovation
+- New building / secondary market
+- Legal information
+- Other listing characteristics
 
-Определяется только жёсткими бесплатными правилами, без ИИ:
+Fallback chain:
 
-- если у продавца больше 2 объявлений недвижимости — считаем агентом
-  (`SELLER_LISTINGS_AGENT_THRESHOLD` в `scraper/src/classify.js`);
-- если несколько разных объявлений повторяются с одним и тем же номером
-  телефона — тоже признак агента (`PHONE_REUSE_AGENT_THRESHOLD` в
-  `run.js`);
-- если сам сайт пометил аккаунт как организацию/риелтора — агент;
-- если Realting.uz показал объявление на странице «от собственников» —
-  собственник, без дополнительных проверок.
-
-Всё, что не попало ни под одно из этих правил, помечается как «Скорее
-всего собственник» (не скрывается, но помечено как неподтверждённое) —
-порог специально настроен так, чтобы не упустить ни одного реального
-собственника. Подтверждённые правилами агентства не показываются ни на
-сайте, ни в Telegram.
-
-## Авторизация — кто может видеть сайт
-
-Нужно войти по email (без пароля, через ссылку на почту). Заходить может
-только тот, чей email есть в таблице `team_members` в Supabase; любой уже
-впущенный человек может пригласить нового прямо на сайте (кнопка
-«👥 Команда»).
-
-### Настройка (один раз)
-
-1. **Supabase → Authentication → Providers** — Email должен быть включён.
-2. **Supabase → Authentication → URL Configuration** — Site URL и Redirect
-   URLs указать на адрес сайта на Vercel.
-3. **Supabase → SQL Editor** — выполнить `supabase/02_team_access.sql`,
-   заменив email на свой (первый человек с доступом).
-4. **Supabase → Project Settings → API Keys** — взять **anon public** ключ.
-5. **Vercel → Environment Variables** — добавить `VITE_SUPABASE_URL` и
-   `VITE_SUPABASE_ANON_KEY`.
-6. Передеплоить сайт.
-
-## Статус «связались»
-
-Кнопка на карточке — хранится в Supabase, общая для всех, кто заходит на
-сайт.
-
-## Переезд на VPS (если облачной связки не хватает)
-
-Бесплатная связка (GitHub Actions + cron-job.org) ограничена по стабильности
-и лимитам минут в месяц. В `deploy/` уже есть готовые файлы для постоянного
-сервера с systemd:
-
-- `deploy/tashkent-scraper.service` — юнит для одного прогона (`node
-  src/run.js`), таймаут 10 минут;
-- `deploy/tashkent-scraper.timer` — таймер, запускающий сервис каждые 15
-  минут (с небольшим случайным разбросом и `Persistent=true`, чтобы не
-  терять пропущенные тики после перезагрузки сервера);
-- `deploy/.env.example` — какие переменные положить в
-  `scraper/.env` на сервере (те же значения, что сейчас в GitHub Secrets).
-
-Установка вкратце: скопировать репозиторий на сервер в
-`/opt/tashkent-apartments-v2`, `npm install` в `scraper/`, создать
-`scraper/.env` по примеру, положить юниты в `/etc/systemd/system/`,
-`systemctl enable --now tashkent-scraper.timer`. Логи — `journalctl -u
-tashkent-scraper -f`.
-
-## Про источники
-
-- **OLX.uz** — телефон часто спрятан за кнопкой «показать номер»; берётся,
-  если продавец написал его текстом в объявлении либо через
-  `fetchOlxPhone()` в `scraper/src/scrapers/olx.js` (с собственным circuit
-  breaker на этот эндпоинт). Опционально поддерживается резидентный/
-  мобильный прокси (`OLX_PROXY_URL`) для запросов к OLX, если IP GitHub
-  Actions/сервера начнёт получать 403.
-- **Uybor.uz** — подключён через внутренний JSON API (`api.uybor.uz`), а не
-  парсинг HTML (сайт рендерит через JS). Категории «Дома» и «Коммерция»
-  пока не подключены — см. TODO-комментарий в
-  `scraper/src/scrapers/uybor.js`.
-- **Realting.uz** — квартиры подтверждены реальными прогонами; для
-  домов/коммерции при 0 объявлений или ошибке — свериться со
-  `scraper/src/scrapers/realting.js`.
-- **Domtut.uz** — включается/отключается флагом `DOMTUT_ENABLED`.
-- **Joymee.uz** — endpoint и структура ответа подтверждены вживую
-  (11.08.2026), но включена в `run.js` пока только для продажи квартир;
-  остальные комбинации deal_type/category ждут проверки — TODO в
-  `scraper/src/scrapers/joymee.js`.
-
-Если у любого источника в логах Actions вдруг видно «0 объявлений» — скорее
-всего поменялась вёрстка/API, нужно свериться со скрапером соответствующего
-источника в `scraper/src/scrapers/`.
+```text
+Gemini
+   ↓
+Groq
+   ↓
+OpenRouter
+   ↓
+Mistral
+   ↓
+SambaNova
+   ↓
+Cloudflare Workers AI

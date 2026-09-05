@@ -662,13 +662,30 @@ function Dashboard() {
   const authFetch = useCallback(
     async (url, options = {}) => {
       if (!session?.access_token) return null;
-      const res = await fetch(url, {
-        ...options,
-        headers: {
-          ...(options.headers || {}),
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
+
+      const doFetch = (token) =>
+        fetch(url, {
+          ...options,
+          headers: {
+            ...(options.headers || {}),
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+      let res = await doFetch(session.access_token);
+
+      if (res.status === 401) {
+        // Токен мог протухнуть, пока вкладка была в фоне (браузеры тормозят
+        // таймер автообновления supabase-js в неактивных вкладках) — сам
+        // клиент этого не заметил и продолжал слать старый access_token.
+        // Прежде чем сдаваться и показывать "не авторизован", пробуем
+        // принудительно обновить сессию и повторить запрос один раз.
+        const { data, error } = await supabase.auth.refreshSession();
+        if (!error && data?.session?.access_token) {
+          res = await doFetch(data.session.access_token);
+        }
+      }
+
       if (res.status === 401) {
         setAuthorized(false);
         return null;
@@ -846,7 +863,8 @@ function Dashboard() {
   // в середину списка, поэтому автообновление в этом режиме не трогаем.
   useEffect(() => {
     if (!session || sortBy !== 'new') return;
-    const id = setInterval(async () => {
+
+    const tick = async () => {
       const res = await authFetch(buildListingsUrl(0));
       if (!res) return;
       try {
@@ -862,8 +880,27 @@ function Dashboard() {
         // тихо пропускаем один цикл автообновления
       }
       fetchStats();
-    }, REFRESH_MS);
-    return () => clearInterval(id);
+    };
+
+    let id = setInterval(tick, REFRESH_MS);
+
+    // Пока вкладка в фоне — не долбим сервер (и не тратим впустую
+    // протухший токен), а при возврате фокуса сразу перезапрашиваем:
+    // к этому моменту authFetch уже успеет обновить сессию сам.
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearInterval(id);
+      } else {
+        tick();
+        id = setInterval(tick, REFRESH_MS);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [session, sortBy, authFetch, buildListingsUrl, fetchStats]);
 
   const toggleContacted = useCallback(async (id, next) => {

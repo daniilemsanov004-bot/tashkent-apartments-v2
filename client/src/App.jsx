@@ -1047,6 +1047,9 @@ function Dashboard() {
   return (
     <>
       <header>
+        <div className="brand-bar">
+          <img className="brand-logo" src="/tashkent-apartments-logo.png" alt="Tashkent Apartments" />
+        </div>
         <div className="header-top">
           <div>
             <div className="eyebrow">Ташкент · недвижимость</div>
